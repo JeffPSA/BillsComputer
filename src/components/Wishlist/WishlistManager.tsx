@@ -1,0 +1,199 @@
+import React, { useState } from 'react';
+import {
+  Bookmark,
+  Plus,
+  Trash2,
+  Check,
+  Compass,
+  ShoppingBag,
+  Sparkles
+} from 'lucide-react';
+import { AcquisitionPreference } from '../../types/tcg';
+
+interface WishlistManagerProps {
+  allCards: any[];
+  onNavigateToBulk: () => void;
+  onNavigateToShopping: () => void;
+}
+
+export const WishlistManager: React.FC<WishlistManagerProps> = ({
+  allCards,
+  onNavigateToBulk,
+  onNavigateToShopping,
+}) => {
+  const [wishlistItems, setWishlistItems] = useState<any[]>([
+    {
+      id: 'wl_1',
+      cardName: 'Prime Catcher',
+      targetQuantity: 1,
+      preferredAcquisition: 'Online',
+      priority: 'High',
+      notes: 'ACE SPEC essential for Mega Darkrai competitive list',
+    },
+    {
+      id: 'wl_2',
+      cardName: 'Buddy-Buddy Poffen',
+      targetQuantity: 3,
+      preferredAcquisition: 'Bulk',
+      priority: 'High',
+      notes: 'Look for in local game store bulk boxes',
+    },
+    {
+      id: 'wl_3',
+      cardName: 'Secret Box',
+      targetQuantity: 1,
+      preferredAcquisition: 'Local Singles',
+      priority: 'Medium',
+      notes: 'Alternative ACE SPEC for Darkrai ex',
+    },
+  ]);
+
+  const [newCardName, setNewCardName] = useState('');
+  const [newQty, setNewQty] = useState(1);
+  const [newPref, setNewPref] = useState<AcquisitionPreference>('Bulk');
+  const [newPriority, setNewPriority] = useState<'High' | 'Medium' | 'Low'>('High');
+
+  const handleAddItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCardName) return;
+
+    setWishlistItems((prev) => [
+      ...prev,
+      {
+        id: `wl_${Date.now()}`,
+        cardName: newCardName,
+        targetQuantity: newQty,
+        preferredAcquisition: newPref,
+        priority: newPriority,
+      },
+    ]);
+
+    setNewCardName('');
+  };
+
+  const removeItem = (id: string) => {
+    setWishlistItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-indigo-700 border-4 border-indigo-900 p-6 rounded-[32px] text-white shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-black italic uppercase tracking-tight text-white flex items-center space-x-2">
+            <Bookmark className="w-5 h-5 text-yellow-400 stroke-[2.5]" />
+            <span>Persistent Collection Wishlist</span>
+          </h1>
+          <p className="text-xs text-indigo-100 font-medium pt-0.5">
+            Collection-level desired acquisitions. Assign preferred acquisition modes (e.g. Bulk vs Online) to direct items to the right workflow.
+          </p>
+        </div>
+
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={onNavigateToBulk}
+            className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 text-xs font-bold rounded-2xl transition flex items-center space-x-1"
+          >
+            <Compass className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Find Bulk Items</span>
+          </button>
+          <button
+            onClick={onNavigateToShopping}
+            className="px-3.5 py-2 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 font-black uppercase text-xs rounded-2xl shadow-md transition flex items-center space-x-1"
+          >
+            <ShoppingBag className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Buy Online Items</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Add New Wishlist Item Form */}
+      <form onSubmit={handleAddItem} className="bg-white border border-slate-200 p-5 rounded-3xl space-y-3 shadow-sm">
+        <div className="text-xs font-black uppercase text-slate-900">Add Desired Card to Wishlist</div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <input
+            type="text"
+            value={newCardName}
+            onChange={(e) => setNewCardName(e.target.value)}
+            placeholder="Card Name (e.g. Prime Catcher)..."
+            className="bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 font-medium"
+          />
+
+          <select
+            value={newPref}
+            onChange={(e) => setNewPref(e.target.value as AcquisitionPreference)}
+            className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-2xl px-3 py-2.5 focus:outline-none"
+          >
+            <option value="Bulk">Preferred: Local Store Bulk</option>
+            <option value="Local Singles">Preferred: Local Singles Binder</option>
+            <option value="Online">Preferred: Online Marketplace</option>
+            <option value="Cheapest">Preferred: Absolute Cheapest</option>
+          </select>
+
+          <select
+            value={newPriority}
+            onChange={(e) => setNewPriority(e.target.value as any)}
+            className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-2xl px-3 py-2.5 focus:outline-none"
+          >
+            <option value="High">Priority: High (Needed ASAP)</option>
+            <option value="Medium">Priority: Medium</option>
+            <option value="Low">Priority: Low</option>
+          </select>
+
+          <button
+            type="submit"
+            className="bg-yellow-400 hover:bg-yellow-300 text-indigo-950 font-black uppercase text-xs rounded-2xl shadow-md transition flex items-center justify-center space-x-1 py-2.5"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" />
+            <span>Add Wishlist Item</span>
+          </button>
+        </div>
+      </form>
+
+      {/* Wishlist Items Table */}
+      <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+        <div className="divide-y divide-slate-100">
+          {wishlistItems.map((item) => (
+            <div key={item.id} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50 transition">
+              <div className="space-y-1">
+                <div className="flex items-center space-x-2">
+                  <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
+                  <span
+                    className={`text-[10px] px-2.5 py-0.5 rounded-full font-black uppercase ${
+                      item.priority === 'High'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
+                  >
+                    {item.priority} Priority
+                  </span>
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium">
+                  Preferred Channel: <span className="text-indigo-700 font-bold">{item.preferredAcquisition}</span>
+                </div>
+
+                {item.notes && <div className="text-[11px] text-slate-400 italic">{item.notes}</div>}
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <span className="text-xs text-slate-900 font-black">{item.targetQuantity}x Needed</span>
+                <button
+                  onClick={() => removeItem(item.id)}
+                  className="p-1.5 bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-400 rounded-xl transition border border-slate-200"
+                >
+                  <Trash2 className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {wishlistItems.length === 0 && (
+            <div className="p-8 text-center text-xs text-slate-400 italic font-medium">Wishlist is empty.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

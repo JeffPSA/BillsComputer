@@ -1,0 +1,6 @@
+{
+  "name": "Pokémon TCG Deck Builder & Collection Manager",
+  "description": "Limitless-style Pokémon TCG deck builder with inventory tracking, card allocation engine, marketplace shopping assistant, and local bulk-hunting checklist.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
