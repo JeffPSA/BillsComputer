@@ -291,6 +291,7 @@ export default function App() {
                     onDeleteDeck={handleDeleteDeck}
                     onAutoAllocate={handleAutoAllocate}
                     onOpenImportModal={() => setShowImportModal(true)}
+                    onDeckDeleted={refreshAllData}
                     onAssembleDeck={(deckId) => {
                       setSelectedDeckId(deckId);
                       setActiveTab('assemble');

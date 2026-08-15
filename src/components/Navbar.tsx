@@ -61,7 +61,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
             <div>
               <span className="font-black text-xl italic uppercase tracking-tighter text-white">
-                Bill's Computer
+                Bill's PC
               </span>
               <span className="hidden sm:inline-block ml-2 text-[10px] px-2.5 py-0.5 bg-indigo-900 text-yellow-300 rounded-full font-bold uppercase tracking-wider border border-indigo-500">
                 Limitless + Inventory
