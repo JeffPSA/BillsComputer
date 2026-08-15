@@ -9,6 +9,7 @@ import {
   Printer
 } from 'lucide-react';
 import { getAssemblePickList } from '../../services/api';
+import { getImageUrl, handleImageError } from '../../utils/imageUtils';
 
 interface AssembleDeckViewProps {
   decks: any[];
@@ -133,18 +134,13 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
                         className="mt-1 w-4 h-4 rounded border-slate-300 text-indigo-700 focus:ring-indigo-500"
                       />
 
-                      {item.printing?.imageUrl ? (
-                        <img
-                          src={item.printing.imageUrl}
-                          alt={item.card?.name}
-                          className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="w-10 h-14 bg-slate-100 border border-slate-200 rounded-md flex items-center justify-center text-[10px] font-black text-slate-400 flex-shrink-0">
-                          POKÉ
-                        </div>
-                      )}
+                      <img
+                        src={getImageUrl(item.printing, item.card)}
+                        alt={item.card?.name}
+                        onError={handleImageError}
+                        className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0"
+                        referrerPolicy="no-referrer"
+                      />
 
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">

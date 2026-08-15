@@ -3,7 +3,11 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { config } from 'dotenv';
-import { INITIAL_CARDS, INITIAL_PRINTINGS } from './src/data/cardDatabase';
+import { 
+  searchPokemonTcgApi, 
+  getPokemonCardById 
+} from './server/cardDataProvider';
+import { getDatabaseManager } from './server/database/index';
 
 // Load environment variables from .env file
 config();
@@ -18,7 +22,9 @@ import {
   StoreProfile,
   Acquisition,
   MarketplaceListing,
-  ShoppingOptimizationResult
+  ShoppingOptimizationResult,
+  CardSet,
+  PokemonTcgSet
 } from './src/types/tcg';
 import {
   calculateCardOwnershipForDeck,
@@ -27,10 +33,14 @@ import {
   resolveBulkCategoryForCard
 } from './src/services/allocationEngine';
 import { searchCards } from './src/services/cardSearch';
+import { searchLocalCards, resolveCardForImport } from './server/localCardSearch';
 import {
-  searchPokemonTcgApi,
-  getPokemonCardById
-} from './server/cardDataProvider';
+  validateAllocationInvariants,
+  applyManualAllocate,
+  applyReleaseAllocation,
+} from './server/allocationIntegrity';
+
+export { validateAllocationInvariants };
 
 const PORT = 3000;
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -41,9 +51,13 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// Initialize database manager
+const dbManager = getDatabaseManager();
+
 interface DatabaseSchema {
   cards: LogicalCard[];
   printings: CardPrinting[];
+  sets: CardSet[];
   collectionItems: CollectionItem[];
   decks: Deck[];
   deckRequirements: DeckRequirement[];
@@ -51,100 +65,20 @@ interface DatabaseSchema {
   wishlistItems: WishlistItem[];
   storeProfiles: StoreProfile[];
   acquisitions: Acquisition[];
+  syncMetadata: {
+    lastSyncTimestamp: string;
+    lastSyncedSetId?: string;
+    lastSyncedPage?: number;
+    totalCardsSynced: number;
+    totalSetsSynced: number;
+  };
 }
 
 function migrateCanonicalCardIds(db: DatabaseSchema): boolean {
-  let changed = false;
-
-  const printingIdMap: Record<string, string> = {
-    'prt_ultra_ball_svi_196': 'sv1-196',
-    'prt_ultra_ball_meg_131': 'sv1-196',
-    'prt_ultra_ball_paf_091': 'paf-91',
-    'prt_nest_ball_svi_181': 'sv1-181',
-    'prt_nest_ball_paf_084': 'paf-84',
-    'prt_boss_orders_pal_172': 'pal-172',
-    'prt_iono_pal_185': 'pal-185',
-    'prt_darkrai_ex_meg_080': 'paf-137',
-    'prt_lucario_ex_meg_105': 'sv1-79',
-    'prt_earthen_vessel_par_163': 'par-163',
-    'prt_buddy_buddy_poffen_tef_144': 'tef-144',
-    'prt_night_stretcher_sft_061': 'sft-061',
-    'prt_super_rod_pal_188': 'pal-188',
-    'prt_counter_catcher_par_160': 'par-160',
-    'prt_switch_svi_194': 'sv1-194',
-    'prt_rare_candy_svi_191': 'sv1-191',
-    'prt_prime_catcher_tef_157': 'tef-157',
-    'prt_secret_box_twm_163': 'twm-163',
-    'prt_arven_svi_166': 'sv1-166',
-    'prt_professors_research_svi_189': 'sv1-189',
-    'prt_sada_vitality_par_170': 'par-170',
-    'prt_collapsed_stadium_brs_137': 'brs-137',
-    'prt_artazon_svi_171': 'sv1-171',
-    'prt_dragapult_ex_twm_130': 'twm-130',
-    'prt_drakloak_twm_129': 'twm-129',
-    'prt_charizard_ex_obf_125': 'obf-125',
-    'prt_pidgeot_ex_obf_164': 'obf-164',
-    'prt_raging_bolt_ex_tef_123': 'tef-123',
-    'prt_teal_mask_ogerpon_ex_twm_025': 'twm-025',
-    'prt_fezandipiti_ex_sft_038': 'sft-038',
-    'prt_radiant_greninja_asr_046': 'swsh10-46',
-    'prt_squawkabilly_ex_pal_169': 'pal-169',
-    'prt_rotom_v_lor_058': 'swsh11-58',
-    'prt_bibarel_brs_121': 'swsh9-121',
-    'prt_mimikyu_pal_097': 'pal-97',
-    'prt_jet_energy_pal_190': 'pal-190',
-    'prt_fire_energy_svi_002': 'sv1-257',
-    'prt_darkness_energy_svi_007': 'sv1-258',
-    'prt_grass_energy_svi_001': 'sv1-256',
-    'prt_psychic_energy_svi_005': 'sv1-255',
-    'prt_fighting_energy_svi_006': 'sv1-254',
-    'prt_water_energy_svi_003': 'sv1-254',
-    'prt_lightning_energy_svi_004': 'sv1-257',
-    'prt_metal_energy_svi_008': 'sv1-259',
-    'prt_1786356214299_sae': 'sv1-81',
-    'prt_1786356214299_2gs': 'sv1-42',
-    'prt_1786356214299_97m': 'sv1-43',
-    'prt_1786356214299_7is': 'sm4-115',
-    'prt_1786356214299_tp5': 'sm4-108',
-    'prt_1786356214299_mfy': '151-54',
-  };
-
-  db.printings.forEach((p) => {
-    if (printingIdMap[p.id]) {
-      p.id = printingIdMap[p.id];
-      changed = true;
-    }
-  });
-
-  db.cards.forEach((c) => {
-    if (printingIdMap[c.defaultPrintingId]) {
-      c.defaultPrintingId = printingIdMap[c.defaultPrintingId];
-      changed = true;
-    }
-  });
-
-  db.collectionItems.forEach((item) => {
-    if (printingIdMap[item.printingId]) {
-      item.printingId = printingIdMap[item.printingId];
-      changed = true;
-    }
-  });
-
-  db.deckRequirements.forEach((req) => {
-    if (req.preferredPrintingId && printingIdMap[req.preferredPrintingId]) {
-      req.preferredPrintingId = printingIdMap[req.preferredPrintingId];
-      changed = true;
-    }
-  });
-
-  db.acquisitions.forEach((acq) => {
-    if (printingIdMap[acq.printingId]) {
-      acq.printingId = printingIdMap[acq.printingId];
-      changed = true;
-    }
-  });
-
-  return changed;
+  // Since we're starting with a fresh SQLite database with canonical API data,
+  // legacy ID migration is not needed. This function is kept for compatibility
+  // but will always return false with SQLite.
+  return false;
 }
 
 function cacheCardsInDb(db: DatabaseSchema, cards: LogicalCard[], printings: CardPrinting[] = []) {
@@ -182,65 +116,9 @@ function cacheCardsInDb(db: DatabaseSchema, cards: LogicalCard[], printings: Car
 }
 
 function getInitialDb(): DatabaseSchema {
-  // Default Decks & Collection
-  const defaultDecks: Deck[] = [
-    {
-      id: 'deck_mega_darkrai',
-      name: 'Mega Darkrai ex',
-      version: 'v1.0 Standard',
-      format: 'Standard',
-      status: 'Active',
-      isPermanentlyAssembled: false,
-      notes: 'Main competitive tournament deck',
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: 'deck_mega_lucario',
-      name: 'Mega Lucario ex',
-      version: 'v1.1 Casual',
-      format: 'Standard',
-      status: 'Active',
-      isPermanentlyAssembled: false,
-      notes: 'Secondary deck sharing Ultra Balls & Supporters',
-      updatedAt: new Date().toISOString(),
-    },
-  ];
-
-  const defaultRequirements: DeckRequirement[] = [
-    // Darkrai Requirements
-    { id: 'req_d_ub', deckId: 'deck_mega_darkrai', cardId: 'card_ultra_ball', quantity: 4, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_d_nb', deckId: 'deck_mega_darkrai', cardId: 'card_nest_ball', quantity: 4, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_d_bo', deckId: 'deck_mega_darkrai', cardId: 'card_boss_orders', quantity: 2, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_d_iono', deckId: 'deck_mega_darkrai', cardId: 'card_iono', quantity: 3, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_d_dk', deckId: 'deck_mega_darkrai', cardId: 'card_darkrai_ex', quantity: 3, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_d_ev', deckId: 'deck_mega_darkrai', cardId: 'card_earthen_vessel', quantity: 2, requirementMode: 'ANY_PRINTING' },
-
-    // Lucario Requirements
-    { id: 'req_l_ub', deckId: 'deck_mega_lucario', cardId: 'card_ultra_ball', quantity: 4, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_l_nb', deckId: 'deck_mega_lucario', cardId: 'card_nest_ball', quantity: 3, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_l_bo', deckId: 'deck_mega_lucario', cardId: 'card_boss_orders', quantity: 2, requirementMode: 'ANY_PRINTING' },
-    { id: 'req_l_luc', deckId: 'deck_mega_lucario', cardId: 'card_lucario_ex', quantity: 3, requirementMode: 'ANY_PRINTING' },
-  ];
-
-  // Collection
-  const defaultCollection: CollectionItem[] = [
-    { id: 'ci_ub_1', cardId: 'card_ultra_ball', printingId: 'sv1-196', quantity: 6, condition: 'NM', language: 'English', acquisitionSource: 'Local Store Bulk', acquisitionCost: 0.50 },
-    { id: 'ci_nb_1', cardId: 'card_nest_ball', printingId: 'sv1-181', quantity: 5, condition: 'NM', language: 'English', acquisitionSource: 'Paldea Chest', acquisitionCost: 0.30 },
-    { id: 'ci_bo_1', cardId: 'card_boss_orders', printingId: 'pal-172', quantity: 2, condition: 'NM', language: 'English', acquisitionSource: 'Paldea Evolved Booster', acquisitionCost: 0.80 },
-    { id: 'ci_iono_1', cardId: 'card_iono', printingId: 'pal-185', quantity: 2, condition: 'NM', language: 'English', acquisitionSource: 'Local Game Store', acquisitionCost: 1.10 },
-    { id: 'ci_dk_1', cardId: 'card_darkrai_ex', printingId: 'paf-137', quantity: 2, condition: 'NM', language: 'English', acquisitionSource: 'Single Purchase', acquisitionCost: 9.00 },
-    { id: 'ci_luc_1', cardId: 'card_lucario_ex', printingId: 'sv1-79', quantity: 3, condition: 'NM', language: 'English', acquisitionSource: 'Single Purchase', acquisitionCost: 6.00 },
-  ];
-
-  // Allocations
-  const defaultAllocations: Allocation[] = [
-    { id: 'al_1', collectionItemId: 'ci_ub_1', deckId: 'deck_mega_darkrai', requirementId: 'req_d_ub', quantity: 4 },
-    { id: 'al_2', collectionItemId: 'ci_ub_1', deckId: 'deck_mega_lucario', requirementId: 'req_l_ub', quantity: 2 },
-    { id: 'al_3', collectionItemId: 'ci_nb_1', deckId: 'deck_mega_darkrai', requirementId: 'req_d_nb', quantity: 4 },
-    { id: 'al_4', collectionItemId: 'ci_nb_1', deckId: 'deck_mega_lucario', requirementId: 'req_l_nb', quantity: 1 },
-    { id: 'al_5', collectionItemId: 'ci_bo_1', deckId: 'deck_mega_darkrai', requirementId: 'req_d_bo', quantity: 2 },
-  ];
-
+  // Start with empty database - cards will be fetched from Pokémon TCG API as needed
+  // This ensures canonical data flow and removes legacy sample data dependencies
+  
   const defaultStoreProfile: StoreProfile = {
     id: 'sp_default_lgs',
     name: 'TopDeck Local Game Shop',
@@ -255,50 +133,34 @@ function getInitialDb(): DatabaseSchema {
       { id: 'cat_7', name: 'Trainer Box', description: 'Dedicated Items, Supporters, Stadiums binder/box', sortOrder: 7 },
       { id: 'cat_8', name: 'Special ACE SPEC Box', description: 'ACE SPEC cards top loading binder', sortOrder: 8 },
     ],
-    overrides: [
-      { id: 'ov_1', storeProfileId: 'sp_default_lgs', cardId: 'card_ultra_ball', categoryId: 'cat_7' },
-      { id: 'ov_2', storeProfileId: 'sp_default_lgs', cardId: 'card_nest_ball', categoryId: 'cat_7' },
-      { id: 'ov_3', storeProfileId: 'sp_default_lgs', cardId: 'card_prime_catcher', categoryId: 'cat_8' },
-    ],
+    overrides: [],
   };
 
   return {
-    cards: INITIAL_CARDS,
-    printings: INITIAL_PRINTINGS,
-    collectionItems: defaultCollection,
-    decks: defaultDecks,
-    deckRequirements: defaultRequirements,
-    allocations: defaultAllocations,
+    cards: [],
+    printings: [],
+    sets: [],
+    collectionItems: [],
+    decks: [],
+    deckRequirements: [],
+    allocations: [],
     wishlistItems: [],
     storeProfiles: [defaultStoreProfile],
     acquisitions: [],
+    syncMetadata: {
+      lastSyncTimestamp: new Date(0).toISOString(),
+      totalCardsSynced: 0,
+      totalSetsSynced: 0,
+    },
   };
 }
 
 function readDb(): DatabaseSchema {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, 'utf-8');
-      const db: DatabaseSchema = JSON.parse(data);
-      if (migrateCanonicalCardIds(db)) {
-        writeDb(db);
-      }
-      return db;
-    }
-  } catch (err) {
-    console.error('Error reading DB, re-initializing:', err);
-  }
-  const init = getInitialDb();
-  writeDb(init);
-  return init;
+  return dbManager.readDb();
 }
 
 function writeDb(db: DatabaseSchema) {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error writing DB:', err);
-  }
+  dbManager.writeDb(db);
 }
 
 async function startServer() {
@@ -359,7 +221,22 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // GET /api/cards/search (Canonical Pokémon TCG API v2 Live Query)
+  // GET /api/cards/sync-status (Catalogue health information)
+  app.get('/api/cards/sync-status', (req, res) => {
+    try {
+      const metadata = dbManager.getSyncMetadata();
+      const stats = dbManager.getStats();
+      res.json({
+        ...metadata,
+        ...stats,
+      });
+    } catch (err: any) {
+      console.error('[Server] Error in /api/cards/sync-status:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/cards/search (LOCAL FIRST, API fallback only if empty)
   app.get('/api/cards/search', requireAuth, async (req, res) => {
     try {
       const query = (req.query.q as string || req.query.query as string || '').trim();
@@ -368,10 +245,39 @@ async function startServer() {
       const page = parseInt((req.query.page as string) || '1', 10);
       const pageSize = parseInt((req.query.pageSize as string) || '30', 10);
 
+      const db = readDb();
+      
+      // Add printings to cards for search
+      const cardsWithPrintings = db.cards.map((c) => ({
+        ...c,
+        printings: db.printings.filter((p) => p.cardId === c.id),
+      }));
+
+      // Try local search first
+      const localResults = searchLocalCards(cardsWithPrintings, query, { supertype, setCode });
+      
+      if (localResults.length > 0) {
+        // Return local results with pagination
+        const startIndex = (page - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        const paginatedResults = localResults.slice(startIndex, endIndex);
+        const allPrintings = paginatedResults.flatMap((c) => c.printings || []);
+        
+        return res.json({
+          success: true,
+          cards: paginatedResults,
+          printings: allPrintings,
+          totalCount: localResults.length,
+          page,
+          pageSize,
+        });
+      }
+
+      // Fallback to API only if local search returns empty
+      console.log(`[Search] Local search empty for "${query}", trying API fallback`);
       const apiResult = await searchPokemonTcgApi(query, { supertype, setCode, page, pageSize });
 
       if (apiResult.success && apiResult.cards.length > 0) {
-        const db = readDb();
         cacheCardsInDb(db, apiResult.cards, apiResult.printings);
       }
 
@@ -394,28 +300,36 @@ async function startServer() {
     }
   });
 
-  // GET /api/cards (Legacy/General card endpoint)
+  // GET /api/cards (Legacy/General card endpoint - LOCAL FIRST)
   app.get('/api/cards', requireAuth, async (req, res) => {
     try {
       const query = (req.query.query as string || req.query.q as string || '').trim();
       const supertype = req.query.supertype as string;
-
-      if (query) {
-        const apiResult = await searchPokemonTcgApi(query, { supertype });
-        if (apiResult.success) {
-          const db = readDb();
-          cacheCardsInDb(db, apiResult.cards, apiResult.printings);
-          return res.json(apiResult.cards);
-        } else {
-          return res.status(503).json({ error: apiResult.error || 'Card search is temporarily unavailable. Please try again.', cards: [] });
-        }
-      }
 
       const db = readDb();
       const cardsWithPrintings = db.cards.map((c) => ({
         ...c,
         printings: db.printings.filter((p) => p.cardId === c.id),
       }));
+
+      if (query) {
+        // Try local search first
+        const localResults = searchLocalCards(cardsWithPrintings, query, { supertype });
+        
+        if (localResults.length > 0) {
+          return res.json(localResults);
+        }
+        
+        // Fallback to API only if local search empty
+        console.log(`[Cards] Local search empty for "${query}", trying API fallback`);
+        const apiResult = await searchPokemonTcgApi(query, { supertype });
+        if (apiResult.success) {
+          cacheCardsInDb(db, apiResult.cards, apiResult.printings);
+          return res.json(apiResult.cards);
+        } else {
+          return res.status(503).json({ error: apiResult.error || 'Card search is temporarily unavailable. Please try again.', cards: [] });
+        }
+      }
 
       const result = searchCards(cardsWithPrintings, query, { supertype });
       res.json(result);
@@ -508,6 +422,7 @@ async function startServer() {
       const allocatedDetails = itemAllocations.map((a) => {
         const deck = db.decks.find((d) => d.id === a.deckId);
         return {
+          allocationId: a.id,
           deckId: a.deckId,
           deckName: deck ? deck.name : 'Unknown Deck',
           allocatedQuantity: a.quantity,
@@ -581,6 +496,7 @@ async function startServer() {
             });
           }
           
+          // Update the collection item with new quantity
           db.collectionItems[idx] = {
             ...db.collectionItems[idx],
             quantity: newQty,
@@ -589,7 +505,8 @@ async function startServer() {
             notes: notes !== undefined ? notes : db.collectionItems[idx].notes,
           };
 
-          // Trim allocations if total allocated exceeds new quantity (safety net)
+          // Safety net: Trim allocations if total allocated exceeds new quantity
+          // This should rarely happen due to the check above, but provides additional safety
           if (totalAllocated > newQty) {
             let toTrim = totalAllocated - newQty;
             for (let i = itemAllocations.length - 1; i >= 0; i--) {
@@ -603,6 +520,11 @@ async function startServer() {
                 toTrim = 0;
               }
             }
+          }
+
+          const invariant = validateAllocationInvariants(db);
+          if (!invariant.ok) {
+            return res.status(400).json({ error: invariant.error });
           }
         }
       }
@@ -628,11 +550,9 @@ async function startServer() {
       }
     }
 
-    // Re-run auto allocation for active decks so allocations stay synchronized
-    const activeDecks = db.decks.filter((d) => d.status === 'Active');
-    for (const d of activeDecks) {
-      db.allocations = autoAllocateDeck(d.id, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
-    }
+    // CRITICAL FIX: Do NOT auto-allocate on collection changes
+    // Auto-allocation should only happen via explicit user action (auto-allocate endpoint)
+    // This prevents silent reallocation when modifying collection quantities
 
     writeDb(db);
     res.json({ success: true, collection: db.collectionItems });
@@ -658,11 +578,8 @@ async function startServer() {
     db.collectionItems = db.collectionItems.filter((ci) => ci.id !== id);
     db.allocations = db.allocations.filter((a) => a.collectionItemId !== id);
 
-    // Re-run auto allocation for active decks
-    const activeDecks = db.decks.filter((d) => d.status === 'Active');
-    for (const d of activeDecks) {
-      db.allocations = autoAllocateDeck(d.id, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
-    }
+    // CRITICAL FIX: Do NOT auto-allocate on collection deletion
+    // Auto-allocation should only happen via explicit user action (auto-allocate endpoint)
 
     writeDb(db);
     res.json({ success: true, collection: db.collectionItems });
@@ -700,6 +617,7 @@ async function startServer() {
 
       const totalRequired = reqs.reduce((sum, r) => sum + r.quantity, 0);
       const totalAllocated = cardOwnershipList.reduce((sum, item) => sum + (item?.ownership.allocatedToThisDeck || 0), 0);
+      const uniqueCardCount = reqs.length; // Count of unique card types
       const isFullyOwned = cardOwnershipList.every((item) => item?.ownership.status === 'FULLY_OWNED');
 
       return {
@@ -707,6 +625,7 @@ async function startServer() {
         requirements: cardOwnershipList,
         totalRequiredCards: totalRequired,
         totalAllocatedCards: totalAllocated,
+        uniqueCardCount: uniqueCardCount,
         isFullyOwned,
       };
     });
@@ -770,11 +689,9 @@ async function startServer() {
       const validReqIds = new Set(db.deckRequirements.filter((r) => r.deckId === deck.id).map((r) => r.id));
       db.allocations = db.allocations.filter((a) => a.deckId !== deck.id || validReqIds.has(a.requirementId));
 
-      // Re-run auto allocation for active decks
-      if (deck.status === 'Active') {
-        const activeDecks = db.decks.filter((d) => d.status === 'Active');
-        db.allocations = autoAllocateDeck(deck.id, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
-      }
+      // CRITICAL FIX: Do NOT auto-allocate on deck creation/import
+      // Allocation should only happen via explicit user action (auto-allocate endpoint)
+      // This prevents silent allocation of collection cards when creating decks
     }
 
     writeDb(db);
@@ -819,6 +736,59 @@ async function startServer() {
       activeDecks
     );
 
+    const invariant = validateAllocationInvariants(db);
+    if (!invariant.ok) {
+      return res.status(400).json({ error: invariant.error });
+    }
+
+    writeDb(db);
+    res.json({ success: true, allocations: db.allocations });
+  });
+
+  // POST /api/allocations/allocate (Manual allocate collection item to deck requirement)
+  app.post('/api/allocations/allocate', requireAuth, (req, res) => {
+    const db = readDb();
+    const { deckId, requirementId, collectionItemId, quantity } = req.body;
+
+    if (!deckId || !requirementId || !collectionItemId) {
+      return res.status(400).json({ error: 'deckId, requirementId, and collectionItemId required' });
+    }
+
+    const result = applyManualAllocate(db, {
+      deckId,
+      requirementId,
+      collectionItemId,
+      quantity: Number(quantity),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    db.allocations = result.allocations!;
+    writeDb(db);
+    res.json({ success: true, allocations: db.allocations });
+  });
+
+  // POST /api/allocations/release (Release part or all of an allocation)
+  app.post('/api/allocations/release', requireAuth, (req, res) => {
+    const db = readDb();
+    const { allocationId, quantity } = req.body;
+
+    if (!allocationId) {
+      return res.status(400).json({ error: 'allocationId required' });
+    }
+
+    const result = applyReleaseAllocation(db, {
+      allocationId,
+      quantity: quantity === undefined || quantity === null ? undefined : Number(quantity),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+
+    db.allocations = result.allocations!;
     writeDb(db);
     res.json({ success: true, allocations: db.allocations });
   });
@@ -854,13 +824,16 @@ async function startServer() {
       sAlloc.quantity -= amount;
       remainingToMove -= amount;
 
-      // Add allocation to target deck requirement
+      // Add allocation to target deck requirement (preserve source isLocked)
       const existingTargetAlloc = db.allocations.find(
         (a) => a.deckId === targetDeckId && a.requirementId === targetReq.id && a.collectionItemId === sAlloc.collectionItemId
       );
 
       if (existingTargetAlloc) {
         existingTargetAlloc.quantity += amount;
+        if (sAlloc.isLocked) {
+          existingTargetAlloc.isLocked = true;
+        }
       } else {
         db.allocations.push({
           id: `alloc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -868,12 +841,18 @@ async function startServer() {
           deckId: targetDeckId,
           requirementId: targetReq.id,
           quantity: amount,
+          isLocked: Boolean(sAlloc.isLocked),
         });
       }
     }
 
     // Clean up 0 quantity allocations
     db.allocations = db.allocations.filter((a) => a.quantity > 0);
+
+    const invariant = validateAllocationInvariants(db);
+    if (!invariant.ok) {
+      return res.status(400).json({ error: invariant.error });
+    }
 
     writeDb(db);
     res.json({ success: true, moved: moveQty - remainingToMove, allocations: db.allocations });
@@ -1278,7 +1257,7 @@ async function startServer() {
   });
 
   // POST /api/import-export/deck (Limitless TCG format parser)
-  app.post('/api/import-export/deck', requireAuth, (req, res) => {
+  app.post('/api/import-export/deck', requireAuth, async (req, res) => {
     const db = readDb();
     const { text, deckName } = req.body;
 
@@ -1288,6 +1267,11 @@ async function startServer() {
 
     const lines = text.split('\n');
     const parsedRequirements: { cardId: string; quantity: number; setCode?: string; cardNumber?: string }[] = [];
+    const unresolvedCards: { name: string; setCode?: string; cardNumber?: string; reason: string }[] = [];
+    const ambiguousCards: { name: string; setCode?: string; cardNumber?: string; possiblePrintings: any[] }[] = [];
+
+    // Group identical cards to avoid duplicate lookups
+    const uniqueCardEntries = new Map<string, { qty: number; setCode?: string; cardNumber?: string }>();
 
     for (const line of lines) {
       const trimmed = line.trim();
@@ -1303,46 +1287,47 @@ async function startServer() {
         const setCode = match[3]?.toUpperCase();
         const cardNumber = match[4];
 
-        let card = db.cards.find((c) => c.name.toLowerCase() === cardName.toLowerCase());
-        if (!card) {
-          // Auto-register card if not existing
-          const newCardId = `card_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
-          const newPrtId = `prt_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
-
-          let supertype: 'Pokémon' | 'Trainer' | 'Energy' = 'Trainer';
-          if (cardName.toLowerCase().includes('energy')) supertype = 'Energy';
-          else if (cardName.toLowerCase().includes('ex') || cardName.toLowerCase().includes('v') || cardName.toLowerCase().includes('star')) supertype = 'Pokémon';
-
-          card = {
-            id: newCardId,
-            name: cardName,
-            supertype,
-            subtype: supertype === 'Energy' ? 'Basic Energy' : supertype === 'Trainer' ? 'Item' : 'Basic',
-            defaultPrintingId: newPrtId,
-          };
-          db.cards.push(card);
-
-          db.printings.push({
-            id: newPrtId,
-            cardId: newCardId,
-            cardName: cardName,
-            setCode: setCode || 'IMP',
-            setName: setCode || 'Imported Set',
-            cardNumber: cardNumber || '1',
-            rarity: 'Uncommon',
-            variant: 'Normal',
-            language: 'English',
-            imageUrl: '',
-            marketPrice: 0.50,
-          });
+        const key = `${cardName}|${setCode || ''}|${cardNumber || ''}`;
+        const existing = uniqueCardEntries.get(key);
+        if (existing) {
+          existing.qty += qty;
+        } else {
+          uniqueCardEntries.set(key, { qty, setCode, cardNumber });
         }
+      }
+    }
 
+    // Resolve each unique card against local database with strict matching
+    for (const [key, entry] of uniqueCardEntries) {
+      const [cardName, setCode, cardNumber] = key.split('|');
+      
+      // Use strict local matching
+      const resolution = resolveCardForImport(db.cards, cardName, setCode, cardNumber);
+      
+      if (resolution.card) {
         parsedRequirements.push({
-          cardId: card.id,
-          quantity: qty,
-          setCode,
-          cardNumber,
+          cardId: resolution.card.id,
+          quantity: entry.qty,
+          setCode: entry.setCode,
+          cardNumber: entry.cardNumber,
         });
+        console.log(`[Import] Resolved: ${cardName} (${resolution.matchType})`);
+      } else if (resolution.matchType === 'ambiguous') {
+        ambiguousCards.push({
+          name: cardName,
+          setCode: entry.setCode,
+          cardNumber: entry.cardNumber,
+          possiblePrintings: resolution.possiblePrintings || [],
+        });
+        console.log(`[Import] Ambiguous: ${cardName} - multiple printings found`);
+      } else {
+        unresolvedCards.push({
+          name: cardName,
+          setCode: entry.setCode,
+          cardNumber: entry.cardNumber,
+          reason: 'not_found',
+        });
+        console.log(`[Import] Unresolved: ${cardName} - not found in local database`);
       }
     }
 
@@ -1370,12 +1355,19 @@ async function startServer() {
       });
     }
 
-    // Auto allocate owned cards
-    const activeDecks = db.decks.filter((d) => d.status === 'Active');
-    db.allocations = autoAllocateDeck(deckId, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
+    // CRITICAL FIX: Do NOT auto-allocate on deck import
+    // Allocation should only happen via explicit user action (auto-allocate endpoint)
+    // This prevents silent allocation of collection cards when importing decks
 
     writeDb(db);
-    res.json({ success: true, deck: newDeck, reqCount: parsedRequirements.length });
+    
+    res.json({ 
+      success: true, 
+      deck: newDeck, 
+      resolvedCount: parsedRequirements.length,
+      unresolvedCards,
+      ambiguousCards,
+    });
   });
 
   // --- VITE MIDDLEWARE / STATIC SERVING ---

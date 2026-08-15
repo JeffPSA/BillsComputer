@@ -138,6 +138,9 @@ export function calculateMultiDeckShortfalls(
 
 /**
  * Auto-allocates available physical collection items to deck requirements.
+ * Locked allocations for the target deck are preserved and count against both
+ * item availability and requirement satisfaction. Unlocked rows for the deck
+ * are recomputed. At most one row per (deckId, requirementId, collectionItemId).
  */
 export function autoAllocateDeck(
   deckId: string,
@@ -146,21 +149,30 @@ export function autoAllocateDeck(
   allocations: Allocation[],
   activeDecks: Deck[]
 ): Allocation[] {
-  const newAllocations = [...allocations.filter((a) => a.deckId !== deckId)]; // Clear existing allocations for this deck
+  const preservedLocked = allocations.filter((a) => a.deckId === deckId && a.isLocked);
+  const newAllocations: Allocation[] = [
+    ...allocations.filter((a) => a.deckId !== deckId),
+    ...preservedLocked,
+  ];
   const activeDeckIds = new Set(activeDecks.filter((d) => d.status === 'Active').map((d) => d.id));
 
-  // If the target deck is inactive, return allocations without adding new ones
+  // If the target deck is inactive, drop its unlocked rows and keep locked? Plan: inactive returns without adding.
+  // Preserve locked rows for inactive decks as well (they remain in newAllocations via preservedLocked).
   if (!activeDeckIds.has(deckId)) {
     return newAllocations;
   }
 
-  // Compute available quantity per collection item
+  // Compute available quantity per collection item:
+  // item.quantity - allocated to other active decks - locked for this deck
   const itemAvailableMap = new Map<string, number>();
   for (const item of collectionItems) {
     const allocatedOther = allocations
       .filter((a) => a.collectionItemId === item.id && a.deckId !== deckId && activeDeckIds.has(a.deckId))
       .reduce((sum, a) => sum + a.quantity, 0);
-    const available = Math.max(0, item.quantity - allocatedOther);
+    const lockedForThisDeck = preservedLocked
+      .filter((a) => a.collectionItemId === item.id)
+      .reduce((sum, a) => sum + a.quantity, 0);
+    const available = Math.max(0, item.quantity - allocatedOther - lockedForThisDeck);
     itemAvailableMap.set(item.id, available);
   }
 
@@ -170,7 +182,10 @@ export function autoAllocateDeck(
   const isLocked = targetDeck?.isPermanentlyAssembled ?? false;
 
   for (const req of deckReqs) {
-    let needed = req.quantity;
+    const lockedForReq = preservedLocked
+      .filter((a) => a.requirementId === req.id)
+      .reduce((sum, a) => sum + a.quantity, 0);
+    let needed = Math.max(0, req.quantity - lockedForReq);
 
     // Matching collection items
     const candidates = collectionItems.filter((item) => {
@@ -187,14 +202,29 @@ export function autoAllocateDeck(
       if (avail <= 0) continue;
 
       const toAllocate = Math.min(needed, avail);
-      newAllocations.push({
-        id: `alloc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        collectionItemId: cand.id,
-        deckId,
-        requirementId: req.id,
-        quantity: toAllocate,
-        isLocked,
-      });
+
+      const existingIdx = newAllocations.findIndex(
+        (a) =>
+          a.deckId === deckId &&
+          a.requirementId === req.id &&
+          a.collectionItemId === cand.id
+      );
+
+      if (existingIdx !== -1) {
+        newAllocations[existingIdx] = {
+          ...newAllocations[existingIdx],
+          quantity: newAllocations[existingIdx].quantity + toAllocate,
+        };
+      } else {
+        newAllocations.push({
+          id: `alloc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          collectionItemId: cand.id,
+          deckId,
+          requirementId: req.id,
+          quantity: toAllocate,
+          isLocked,
+        });
+      }
 
       itemAvailableMap.set(cand.id, avail - toAllocate);
       needed -= toAllocate;

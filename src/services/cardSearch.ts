@@ -24,15 +24,15 @@ export interface SearchFilters {
  */
 
 /**
- * Normalizes text for robust search by stripping accent marks/diacritics, lowercasing, and stripping punctuation.
+ * Normalizes text for robust search while preserving meaningful characters.
+ * Now preserves accented characters (é, ñ, etc.) for better Pokémon name matching.
  */
 function normalizeText(text: string): string {
   if (!text) return '';
   return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // remove accent marks (e.g. é -> e)
     .toLowerCase()
-    .replace(/['’'"`.,\-–—]/g, '') // remove quotes, apostrophes, hyphens
+    .replace(/['’'"`]/g, '') // remove quotes and apostrophes only
+    .replace(/\s+/g, ' ') // normalize multiple spaces to single space
     .trim();
 }
 

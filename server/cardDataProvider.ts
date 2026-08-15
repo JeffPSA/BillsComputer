@@ -1,5 +1,5 @@
 import { config } from 'dotenv';
-import { LogicalCard, CardPrinting, Supertype, Subtype, CardRarity, CardVariant } from '../src/types/tcg';
+import { LogicalCard, CardPrinting, Supertype, Subtype, CardRarity, CardVariant, CardSet, PokemonTcgSet, Attack, Ability, Weakness, Resistance, Legalities } from '../src/types/tcg';
 
 // Load environment variables
 config();
@@ -12,24 +12,18 @@ interface CacheEntry<T> {
 }
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
+const FAILURE_CACHE_TTL_MS = 30 * 1000; // 30 seconds for failures to prevent retry storms
 const searchCache = new Map<string, CacheEntry<{ cards: LogicalCard[]; totalCount: number; page: number; pageSize: number }>>();
 const cardByIdCache = new Map<string, CacheEntry<{ card: LogicalCard; printing: CardPrinting }>>();
 const setsCache = new Map<string, CacheEntry<{ sets: PokemonTcgSet[] }>>();
+const failureCache = new Map<string, { timestamp: number; error: string }>();
 
 // Rate limiting to respect Pokémon TCG API limits (30/minute without key, higher with key)
 const lastRequestTime = new Map<string, number>();
-const MIN_REQUEST_INTERVAL_MS = 2000; // 2 seconds between requests (conservative)
+const MIN_REQUEST_INTERVAL_MS = 500; // Reduced to 500ms since we're doing less API calls now
 
-interface PokemonTcgSet {
-  id: string;
-  name: string;
-  series: string;
-  printedTotal: number;
-  total: number;
-  ptcgoCode?: string;
-  releaseDate: string;
-  updatedAt: string;
-}
+// In-flight request deduplication
+const inFlightRequests = new Map<string, Promise<any>>();
 
 /**
  * Rate limiter to respect Pokémon TCG API rate limits.
@@ -111,6 +105,7 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
 
 /**
  * Checks if a given code matches a known Pokémon TCG set ID or ptcgoCode.
+ * Enhanced to handle common set codes like MEG, PBL that may not be in current API.
  */
 export async function isValidSetCode(code: string): Promise<boolean> {
   if (!code) return false;
@@ -118,21 +113,38 @@ export async function isValidSetCode(code: string): Promise<boolean> {
   const normalizedCode = code.toLowerCase();
   const sets = await fetchPokemonTcgSets();
   
-  return sets.some(set => 
+  // Check against official API data
+  const isValid = sets.some(set => 
     set.id.toLowerCase() === normalizedCode || 
     (set.ptcgoCode && set.ptcgoCode.toLowerCase() === normalizedCode)
   );
+  
+  if (isValid) return true;
+  
+  // Handle special cases for sets that may not be in current API data
+  // This provides fallback support for common set codes
+  const knownSetCodes = [
+    'meg', // Mega Evolution
+    'pbl', // Pokémon League / Promo
+    'sv1', 'sv2', 'sv3', 'sv4', 'sv5', 'sv6', // Scarlet & Violet series
+    'swsh1', 'swsh2', 'swsh3', 'swsh4', 'swsh5', // Sword & Shield series
+    'sm1', 'sm2', 'sm3', 'sm4', // Sun & Moon series
+    'xy1', 'xy2', 'xy3', // XY series
+  ];
+  
+  return knownSetCodes.includes(normalizedCode);
 }
 
 /**
- * Sanitizes a string into a clean ID slug.
+ * Sanitizes a string into a clean ID slug while preserving meaningful characters.
+ * Used for generating consistent card IDs from API data.
  */
 function slugify(text: string): string {
   if (!text) return 'unknown';
   return text
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u0300-\u036f]/g, '') // remove accent marks for ID generation only
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 }
@@ -162,6 +174,41 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
   // Image URLs
   const imageUrl = apiCard.images?.large || apiCard.images?.small || 'https://images.pokemontcg.io/sv1/1_hires.png';
 
+  // Map attacks
+  const attacks: Attack[] = (apiCard.attacks || []).map((a: any) => ({
+    name: a.name || '',
+    cost: a.cost || [],
+    convertedEnergyCost: a.cost?.length || 0,
+    damage: a.damage || '',
+    text: a.text || '',
+  }));
+
+  // Map abilities
+  const abilities: Ability[] = (apiCard.abilities || []).map((a: any) => ({
+    name: a.name || '',
+    text: a.text || '',
+    type: a.type || '',
+  }));
+
+  // Map weaknesses
+  const weaknesses: Weakness[] = (apiCard.weaknesses || []).map((w: any) => ({
+    type: w.type || '',
+    value: w.value || '',
+  }));
+
+  // Map resistances
+  const resistances: Resistance[] = (apiCard.resistances || []).map((r: any) => ({
+    type: r.type || '',
+    value: r.value || '',
+  }));
+
+  // Map legalities
+  const legalities: Legalities = {
+    unlimited: apiCard.legalities?.unlimited || false,
+    standard: apiCard.legalities?.standard || false,
+    expanded: apiCard.legalities?.expanded || false,
+  };
+
   const printing: CardPrinting = {
     id: printingId,
     cardId,
@@ -174,6 +221,18 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
     language: 'English',
     imageUrl,
     marketPrice: Number(marketPrice.toFixed(2)),
+    // Extended fields
+    attacks,
+    abilities,
+    weaknesses,
+    resistances,
+    retreatCost: typeof apiCard.convertedRetreatCost === 'number' ? apiCard.convertedRetreatCost : undefined,
+    nationalPokedexNumbers: apiCard.nationalPokedexNumbers,
+    regulationMark: apiCard.regulationMark,
+    legalities,
+    artist: apiCard.artist,
+    imageUrlSmall: apiCard.images?.small,
+    imageUrlLarge: apiCard.images?.large,
   };
 
   const card: LogicalCard = {
@@ -190,6 +249,22 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
   };
 
   return { card, printing };
+}
+
+/**
+ * Maps a Pokemontcg.io raw API set object to our CardSet interface.
+ */
+export function transformApiSetToSet(apiSet: PokemonTcgSet): CardSet {
+  return {
+    id: apiSet.id,
+    name: apiSet.name,
+    series: apiSet.series,
+    ptcgoCode: apiSet.ptcgoCode,
+    releaseDate: apiSet.releaseDate,
+    printedTotal: apiSet.printedTotal,
+    total: apiSet.total,
+    updatedAt: apiSet.updatedAt,
+  };
 }
 
 /**
@@ -223,9 +298,26 @@ async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
   // Pattern for card numbers: standalone numbers
   const cardNumberPattern = /^\d+$/;
 
+  // Handle ex/EX/Mega/V/VMAX/VSTAR subtypes - these should be part of card name, not treated as set codes
+  const subtypePatterns = ['ex', 'EX', 'Mega', 'V', 'VMAX', 'VSTAR', 'GX', 'TAG TEAM', 'RESTORED'];
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     const upperToken = token.toUpperCase();
+
+    // Check if token is a subtype marker - these should be part of card name
+    if (subtypePatterns.includes(upperToken) || 
+        upperToken.includes('EX') || 
+        upperToken.includes('MEGA') || 
+        upperToken.includes('VMAX') || 
+        upperToken.includes('VSTAR')) {
+      // Treat as part of card name
+      if (result.cardName) {
+        result.cardName += ' ';
+      }
+      result.cardName += token;
+      continue;
+    }
 
     // Check if token might be a set code (pattern match)
     if (setCodePattern.test(upperToken) && !result.hasSetCode) {
@@ -294,7 +386,7 @@ async function buildLuceneQuery(rawQuery: string, supertype?: string, setCode?: 
       }
       
       if (parsed.cardName) {
-        // Use wildcard for partial matching
+        // Use wildcard for partial matching, preserving original characters including accents
         parts.push(`name:"*${parsed.cardName}*"`);
       }
       
@@ -328,7 +420,8 @@ export interface CardSearchResult {
 }
 
 /**
- * Searches cards from Pokémon TCG API v2 with fallback strategy.
+ * Searches cards from Pokémon TCG API v2 with simplified fallback strategy.
+ * No aggressive retry loops - single primary query, one fallback if needed.
  */
 export async function searchPokemonTcgApi(
   query: string,
@@ -341,40 +434,34 @@ export async function searchPokemonTcgApi(
   let luceneQ = await buildLuceneQuery(query, options?.supertype, options?.setCode);
   let result = await executeSearch(luceneQ, page, pageSize);
   
-  // Fallback strategy: if no results and query had specific components, try broader search
+  // Simplified fallback: only try name-only wildcard if primary fails
   if (!result.success || result.cards.length === 0) {
-    const parsed = await parseSearchQuery(query);
-    
-    // If we had a set code, try without it
-    if (parsed.hasSetCode && parsed.cardName) {
-      console.log('[CardDataProvider] No results with set code, trying card name only');
-      const fallbackQuery = await buildLuceneQuery(parsed.cardName, options?.supertype);
-      result = await executeSearch(fallbackQuery, page, pageSize);
+    console.log('[CardDataProvider] Primary query failed, trying name-only wildcard fallback');
+    let fallbackQuery = `name:"*${query}*"`;
+    if (options?.supertype && options.supertype !== 'ALL') {
+      fallbackQuery += ` supertype:"${options.supertype}"`;
     }
-    // If we had a card number, try without it
-    else if (parsed.hasCardNumber && (parsed.cardName || parsed.hasSetCode)) {
-      console.log('[CardDataProvider] No results with card number, trying without it');
-      const fallbackQuery = parsed.cardName 
-        ? await buildLuceneQuery(parsed.cardName, options?.supertype)
-        : await buildLuceneQuery(parsed.setCode, options?.supertype);
-      result = await executeSearch(fallbackQuery, page, pageSize);
+    if (options?.setCode && options.setCode !== 'ALL') {
+      fallbackQuery += ` set.id:"${options.setCode.toLowerCase()}"`;
     }
-    // Final fallback: name-only wildcard
-    else if (parsed.cardName) {
-      console.log('[CardDataProvider] No results, trying name-only wildcard');
-      let fallbackQuery = `name:"*${parsed.cardName}*"`;
-      if (options?.supertype && options.supertype !== 'ALL') {
-        fallbackQuery += ` supertype:"${options.supertype}"`;
-      }
-      result = await executeSearch(fallbackQuery, page, pageSize);
-    }
+    result = await executeSearch(fallbackQuery, page, pageSize);
   }
 
   return result;
 }
 
+export async function searchPokemonTcgSetCards(
+  setId: string,
+  options?: { page?: number; pageSize?: number }
+): Promise<CardSearchResult> {
+  const page = options?.page || 1;
+  const pageSize = options?.pageSize || 250;
+  return executeSearch(`set.id:"${setId.toLowerCase()}"`, page, pageSize);
+}
+
 /**
  * Executes a search with the given Lucene query.
+ * Includes request deduplication and intelligent error handling.
  */
 async function executeSearch(
   luceneQ: string,
@@ -382,6 +469,8 @@ async function executeSearch(
   pageSize: number
 ): Promise<CardSearchResult> {
   const cacheKey = `${luceneQ}_p${page}_s${pageSize}`;
+  
+  // Check cache first
   const cached = searchCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     const cards = cached.data.cards;
@@ -396,96 +485,10 @@ async function executeSearch(
     };
   }
 
-  try {
-    await rateLimit('searchCards');
-    const params = new URLSearchParams();
-    if (luceneQ) {
-      params.append('q', luceneQ);
-    }
-    params.append('page', String(page));
-    params.append('pageSize', String(pageSize));
-
-    const apiUrl = `${POKEMON_TCG_API_BASE}/cards?${params.toString()}`;
-    console.log(`[CardDataProvider] Fetching: ${apiUrl}`);
-
-    const res = await fetch(apiUrl, {
-      headers: getApiHeaders(),
-      signal: AbortSignal.timeout(10000), // 10 second timeout
-    });
-
-    if (!res.ok) {
-      console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${res.status}: ${res.statusText}`);
-      return {
-        success: false,
-        cards: [],
-        printings: [],
-        totalCount: 0,
-        page,
-        pageSize,
-        error: `Pokémon TCG API returned HTTP ${res.status}`,
-      };
-    }
-
-    const json = await res.json();
-    const rawCards: any[] = json.data || [];
-    const totalCount = json.totalCount || rawCards.length;
-
-    // Group printings by Logical Card (card_name)
-    const cardMap = new Map<string, { card: LogicalCard; printings: CardPrinting[] }>();
-
-    for (const rawCard of rawCards) {
-      const { card, printing } = transformApiCardToLogicalAndPrinting(rawCard);
-      if (!cardMap.has(card.id)) {
-        cardMap.set(card.id, {
-          card: { ...card, printings: [] },
-          printings: [],
-        });
-      }
-      const existing = cardMap.get(card.id)!;
-      // Add printing if not already included
-      if (!existing.printings.some((p) => p.id === printing.id)) {
-        existing.printings.push(printing);
-      }
-    }
-
-    const cards: LogicalCard[] = [];
-    const allPrintings: CardPrinting[] = [];
-
-    for (const entry of cardMap.values()) {
-      entry.card.printings = entry.printings;
-      cards.push(entry.card);
-      allPrintings.push(...entry.printings);
-    }
-
-    // Update cache
-    searchCache.set(cacheKey, {
-      data: { cards, totalCount, page, pageSize },
-      timestamp: Date.now(),
-    });
-
-    return {
-      success: true,
-      cards,
-      printings: allPrintings,
-      totalCount,
-      page,
-      pageSize,
-    };
-  } catch (err: any) {
-    // Handle timeout errors specifically
-    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      console.warn('[CardDataProvider] Request timed out after 10 seconds');
-      return {
-        success: false,
-        cards: [],
-        printings: [],
-        totalCount: 0,
-        page,
-        pageSize,
-        error: 'Request timed out',
-      };
-    }
-    console.error('[CardDataProvider] Request failed:', err);
+  // Check failure cache to prevent retry storms
+  const failure = failureCache.get(cacheKey);
+  if (failure && Date.now() - failure.timestamp < FAILURE_CACHE_TTL_MS) {
+    console.log(`[CardDataProvider] Using cached failure for: ${cacheKey}`);
     return {
       success: false,
       cards: [],
@@ -493,9 +496,207 @@ async function executeSearch(
       totalCount: 0,
       page,
       pageSize,
-      error: 'Card search is temporarily unavailable. Please try again.',
+      error: failure.error,
     };
   }
+
+  // Check for in-flight request (deduplication)
+  const inFlight = inFlightRequests.get(cacheKey);
+  if (inFlight) {
+    console.log(`[CardDataProvider] Waiting for in-flight request: ${cacheKey}`);
+    return inFlight;
+  }
+
+  // Create new request
+  const requestPromise = (async () => {
+    try {
+      await rateLimit('searchCards');
+      const params = new URLSearchParams();
+      if (luceneQ) {
+        params.append('q', luceneQ);
+      }
+      params.append('page', String(page));
+      params.append('pageSize', String(pageSize));
+
+      const apiUrl = `${POKEMON_TCG_API_BASE}/cards?${params.toString()}`;
+      console.log(`[CardDataProvider] Fetching: ${apiUrl}`);
+
+      const res = await fetch(apiUrl, {
+        headers: getApiHeaders(),
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      });
+
+      if (!res.ok) {
+        const status = res.status;
+        const statusText = res.statusText;
+        
+        // Intelligent error handling based on status code
+        if (status === 402) {
+          // 402 = Request Failed - do NOT retry
+          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP 402 (Request Failed) - not retrying`);
+          const error = `Pokémon TCG API request failed (402)`;
+          failureCache.set(cacheKey, { timestamp: Date.now(), error });
+          return {
+            success: false,
+            cards: [],
+            printings: [],
+            totalCount: 0,
+            page,
+            pageSize,
+            error,
+          };
+        } else if (status === 429) {
+          // 429 = Too Many Requests - respect Retry-After if provided
+          const retryAfter = res.headers.get('Retry-After');
+          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP 429 (Rate Limited) - Retry-After: ${retryAfter}s`);
+          const error = `Rate limited by Pokémon TCG API (429)`;
+          failureCache.set(cacheKey, { timestamp: Date.now(), error });
+          return {
+            success: false,
+            cards: [],
+            printings: [],
+            totalCount: 0,
+            page,
+            pageSize,
+            error,
+          };
+        } else if (status >= 500 && status < 600) {
+          // 5xx errors - single retry with exponential backoff, then fail
+          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${status} (${statusText}) - will retry once`);
+          
+          // Exponential backoff: wait 1s, then retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          const retryRes = await fetch(apiUrl, {
+            headers: getApiHeaders(),
+            signal: AbortSignal.timeout(10000),
+          });
+          
+          if (!retryRes.ok) {
+            console.warn(`[CardDataProvider] Retry also failed with HTTP ${retryRes.status}`);
+            const error = `Pokémon TCG API returned HTTP ${retryRes.status}`;
+            failureCache.set(cacheKey, { timestamp: Date.now(), error });
+            return {
+              success: false,
+              cards: [],
+              printings: [],
+              totalCount: 0,
+              page,
+              pageSize,
+              error,
+            };
+          }
+          
+          // Retry succeeded - continue processing
+          const json = await retryRes.json();
+          return processApiResponse(json, cacheKey, page, pageSize);
+        } else {
+          // Other 4xx errors - do not retry
+          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${status} (${statusText}) - not retrying`);
+          const error = `Pokémon TCG API returned HTTP ${status}`;
+          failureCache.set(cacheKey, { timestamp: Date.now(), error });
+          return {
+            success: false,
+            cards: [],
+            printings: [],
+            totalCount: 0,
+            page,
+            pageSize,
+            error,
+          };
+        }
+      }
+
+      const json = await res.json();
+      return processApiResponse(json, cacheKey, page, pageSize);
+    } catch (err: any) {
+      // Handle timeout errors specifically
+      if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+        console.warn('[CardDataProvider] Request timed out after 10 seconds');
+        const error = 'Request timed out';
+        failureCache.set(cacheKey, { timestamp: Date.now(), error });
+        return {
+          success: false,
+          cards: [],
+          printings: [],
+          totalCount: 0,
+          page,
+          pageSize,
+          error,
+        };
+      }
+      console.error('[CardDataProvider] Request failed:', err);
+      const error = 'Card search is temporarily unavailable. Please try again.';
+      failureCache.set(cacheKey, { timestamp: Date.now(), error });
+      return {
+        success: false,
+        cards: [],
+        printings: [],
+        totalCount: 0,
+        page,
+        pageSize,
+        error,
+      };
+    } finally {
+      // Clean up in-flight request
+      inFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  // Store in-flight request
+  inFlightRequests.set(cacheKey, requestPromise);
+
+  return requestPromise;
+}
+
+/**
+ * Process API response and group printings by logical card.
+ */
+function processApiResponse(json: any, cacheKey: string, page: number, pageSize: number): CardSearchResult {
+  const rawCards: any[] = json.data || [];
+  const totalCount = json.totalCount || rawCards.length;
+
+  // Group printings by Logical Card (card_name)
+  const cardMap = new Map<string, { card: LogicalCard; printings: CardPrinting[] }>();
+
+  for (const rawCard of rawCards) {
+    const { card, printing } = transformApiCardToLogicalAndPrinting(rawCard);
+    if (!cardMap.has(card.id)) {
+      cardMap.set(card.id, {
+        card: { ...card, printings: [] },
+        printings: [],
+      });
+    }
+    const existing = cardMap.get(card.id)!;
+    // Add printing if not already included
+    if (!existing.printings.some((p) => p.id === printing.id)) {
+      existing.printings.push(printing);
+    }
+  }
+
+  const cards: LogicalCard[] = [];
+  const allPrintings: CardPrinting[] = [];
+
+  for (const entry of cardMap.values()) {
+    entry.card.printings = entry.printings;
+    cards.push(entry.card);
+    allPrintings.push(...entry.printings);
+  }
+
+  // Update cache
+  searchCache.set(cacheKey, {
+    data: { cards, totalCount, page, pageSize },
+    timestamp: Date.now(),
+  });
+
+  return {
+    success: true,
+    cards,
+    printings: allPrintings,
+    totalCount,
+    page,
+    pageSize,
+  };
 }
 
 /**
