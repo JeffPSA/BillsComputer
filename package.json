@@ -9,12 +9,19 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.cjs",
     "lint": "tsc --noEmit",
-    "test": "tsx src/services/allocationEngine.test.ts && tsx tests/tcgWorkflow.test.ts && tsx tests/adversarialAudit.test.ts && tsx tests/functionalityPass.test.ts"
+    "test": "tsx src/services/allocationEngine.test.ts && tsx tests/tcgWorkflow.test.ts && tsx tests/adversarialAudit.test.ts && tsx tests/functionalityPass.test.ts && tsx tests/allocationPersistence.test.ts && tsx tests/allocationDuplicateRegression.test.ts && tsx tests/allocationLock.test.ts && tsx tests/allocationInvariant.test.ts",
+    "test:alloc": "tsx tests/allocationDuplicateRegression.test.ts && tsx tests/allocationLock.test.ts && tsx tests/allocationInvariant.test.ts",
+    "test:api": "tsx tests/apiIntegration.test.ts",
+    "sync-cards": "node --import tsx/esm server/cardSync.ts",
+    "sync-cards:force": "tsx server/cardSync.ts --force",
+    "init-db": "node --import tsx/esm server/database/init.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/better-sqlite3": "^9.6.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "^13.0.3",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",

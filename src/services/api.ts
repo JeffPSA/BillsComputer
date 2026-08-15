@@ -265,6 +265,31 @@ export async function moveAllocation(sourceDeckId: string, targetDeckId: string,
   return await res.json();
 }
 
+export async function allocateToDeck(
+  deckId: string,
+  requirementId: string,
+  collectionItemId: string,
+  quantity: number
+) {
+  const res = await fetch(`${API_BASE}/api/allocations/allocate`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ deckId, requirementId, collectionItemId, quantity }),
+  });
+  return await res.json();
+}
+
+export async function releaseAllocation(allocationId: string, quantity?: number) {
+  const res = await fetch(`${API_BASE}/api/allocations/release`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(
+      quantity === undefined ? { allocationId } : { allocationId, quantity }
+    ),
+  });
+  return await res.json();
+}
+
 export async function fetchBulkHuntChecklist(deckId = 'ALL', storeProfileId = '') {
   const res = await fetch(`${API_BASE}/api/bulk-hunt?deckId=${deckId}&storeProfileId=${storeProfileId}`, {
     headers: getAuthHeaders(),

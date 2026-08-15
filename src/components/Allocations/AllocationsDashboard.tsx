@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Share2,
-  Layers,
-  Box,
   AlertTriangle,
   RefreshCw,
   Power,
   Info,
-  ArrowRightLeft
+  ArrowRightLeft,
+  PlusCircle,
+  MinusCircle
 } from 'lucide-react';
-import { moveAllocation } from '../../services/api';
+import { allocateToDeck, moveAllocation, releaseAllocation } from '../../services/api';
 
 interface AllocationsDashboardProps {
   decks: any[];
@@ -27,7 +27,6 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
   onRefreshAllData,
 }) => {
   const activeDecks = decks.filter((d) => d.status === 'Active');
-  const inactiveDecks = decks.filter((d) => d.status !== 'Active');
 
   // Transfer state
   const [sourceDeckId, setSourceDeckId] = useState<string>('');
@@ -36,10 +35,44 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
   const [transferQty, setTransferQty] = useState<number>(1);
   const [transferMsg, setTransferMsg] = useState<string | null>(null);
 
-  // Find cards allocated across 2+ decks
+  // Manual allocate state
+  const [allocDeckId, setAllocDeckId] = useState<string>('');
+  const [allocReqId, setAllocReqId] = useState<string>('');
+  const [allocCollectionItemId, setAllocCollectionItemId] = useState<string>('');
+  const [allocQty, setAllocQty] = useState<number>(1);
+
+  const allocDeck = activeDecks.find((d) => d.id === allocDeckId);
+  const allocRequirements = useMemo(() => {
+    if (!allocDeck?.requirements) return [];
+    return allocDeck.requirements
+      .map((r: any) => r.requirement || r)
+      .filter((r: any) => r && r.id);
+  }, [allocDeck]);
+
+  const matchingCollectionItems = useMemo(() => {
+    const req = allocRequirements.find((r: any) => r.id === allocReqId);
+    if (!req) return [];
+    return collection.filter((ci) => {
+      if (ci.cardId !== req.cardId) return false;
+      if (req.requirementMode === 'SPECIFIC_PRINTING' && req.preferredPrintingId) {
+        return ci.printingId === req.preferredPrintingId;
+      }
+      return true;
+    });
+  }, [allocReqId, allocRequirements, collection]);
+
+  // Find cards allocated across 2+ decks, plus any allocated cards for release UI
   const sharedAllocatedItems = collection.filter(
     (item) => item.allocatedDetails && item.allocatedDetails.length > 1
   );
+  const anyAllocatedItems = collection.filter(
+    (item) => item.allocatedDetails && item.allocatedDetails.length > 0
+  );
+
+  const showMsg = (msg: string, isError = false) => {
+    setTransferMsg(isError ? `Error: ${msg}` : msg);
+    setTimeout(() => setTransferMsg(null), 4000);
+  };
 
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,9 +80,33 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
 
     const res = await moveAllocation(sourceDeckId, targetDeckId, selectedCardId, transferQty);
     if (res.success) {
-      setTransferMsg(`Successfully transferred ${res.moved} physical allocation copy(s)!`);
+      showMsg(`Successfully transferred ${res.moved} physical allocation copy(s)!`);
       if (onRefreshAllData) onRefreshAllData();
-      setTimeout(() => setTransferMsg(null), 3000);
+    } else {
+      showMsg(res.error || 'Transfer failed', true);
+    }
+  };
+
+  const handleManualAllocate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!allocDeckId || !allocReqId || !allocCollectionItemId) return;
+
+    const res = await allocateToDeck(allocDeckId, allocReqId, allocCollectionItemId, allocQty);
+    if (res.success) {
+      showMsg(`Allocated ${allocQty} copy(s) to deck.`);
+      if (onRefreshAllData) onRefreshAllData();
+    } else {
+      showMsg(res.error || 'Allocate failed', true);
+    }
+  };
+
+  const handleRelease = async (allocationId: string, quantity?: number) => {
+    const res = await releaseAllocation(allocationId, quantity);
+    if (res.success) {
+      showMsg(quantity ? `Released ${quantity} copy(s).` : 'Released allocation.');
+      if (onRefreshAllData) onRefreshAllData();
+    } else {
+      showMsg(res.error || 'Release failed', true);
     }
   };
 
@@ -96,10 +153,95 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
         </div>
 
         {transferMsg && (
-          <div className="bg-emerald-100 text-emerald-900 border border-emerald-300 p-3 rounded-2xl text-xs font-bold">
+          <div
+            className={`${
+              transferMsg.startsWith('Error:')
+                ? 'bg-rose-100 text-rose-900 border-rose-300'
+                : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+            } border p-3 rounded-2xl text-xs font-bold`}
+          >
             {transferMsg}
           </div>
         )}
+
+        {/* Manual Allocate Form */}
+        <form onSubmit={handleManualAllocate} className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl space-y-3">
+          <div className="flex items-center space-x-2 text-xs font-black uppercase text-emerald-950">
+            <PlusCircle className="w-4 h-4 text-emerald-700 stroke-[2.5]" />
+            <span>Manual Allocate</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+            <select
+              value={allocDeckId}
+              onChange={(e) => {
+                setAllocDeckId(e.target.value);
+                setAllocReqId('');
+                setAllocCollectionItemId('');
+              }}
+              className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
+            >
+              <option value="">Deck...</option>
+              {activeDecks.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={allocReqId}
+              onChange={(e) => {
+                setAllocReqId(e.target.value);
+                setAllocCollectionItemId('');
+              }}
+              className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
+              disabled={!allocDeckId}
+            >
+              <option value="">Requirement...</option>
+              {allocRequirements.map((r: any) => {
+                const cardName =
+                  allocDeck?.requirements?.find((x: any) => (x.requirement || x).id === r.id)?.card
+                    ?.name || r.cardId;
+                return (
+                  <option key={r.id} value={r.id}>
+                    {cardName} ×{r.quantity}
+                  </option>
+                );
+              })}
+            </select>
+
+            <select
+              value={allocCollectionItemId}
+              onChange={(e) => setAllocCollectionItemId(e.target.value)}
+              className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
+              disabled={!allocReqId}
+            >
+              <option value="">Collection item...</option>
+              {matchingCollectionItems.map((ci) => (
+                <option key={ci.id} value={ci.id}>
+                  {ci.card?.name || ci.cardId} (avail {ci.availableQuantity ?? ci.quantity})
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="number"
+              min={1}
+              value={allocQty}
+              onChange={(e) => setAllocQty(Math.max(1, Number(e.target.value) || 1))}
+              className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
+            />
+
+            <button
+              type="submit"
+              disabled={!allocDeckId || !allocReqId || !allocCollectionItemId}
+              className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-white font-black uppercase text-xs rounded-xl py-2 transition shadow-xs"
+            >
+              Allocate
+            </button>
+          </div>
+        </form>
 
         {/* Transfer Allocation Quick Form */}
         <form onSubmit={handleTransfer} className="bg-indigo-50 border border-indigo-200 p-4 rounded-2xl space-y-3">
@@ -159,7 +301,7 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
         </form>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {sharedAllocatedItems.map((item) => (
+          {(sharedAllocatedItems.length > 0 ? sharedAllocatedItems : anyAllocatedItems).map((item) => (
             <div key={item.id} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="font-black text-sm text-indigo-950">{item.card?.name}</span>
@@ -170,18 +312,31 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
 
               <div className="space-y-1 pt-2 border-t border-slate-200 font-medium">
                 {item.allocatedDetails.map((a: any, idx: number) => (
-                  <div key={idx} className="flex justify-between text-xs text-slate-700">
+                  <div key={a.allocationId || idx} className="flex justify-between items-center text-xs text-slate-700 gap-2">
                     <span>• {a.deckName}</span>
-                    <span className="text-indigo-700 font-bold">{a.allocatedQuantity} physical copies</span>
+                    <span className="flex items-center gap-2">
+                      <span className="text-indigo-700 font-bold">{a.allocatedQuantity} physical copies</span>
+                      {a.allocationId && (
+                        <button
+                          type="button"
+                          onClick={() => handleRelease(a.allocationId)}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 font-bold hover:bg-rose-200"
+                          title="Release all copies of this allocation"
+                        >
+                          <MinusCircle className="w-3 h-3" />
+                          Release
+                        </button>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           ))}
 
-          {sharedAllocatedItems.length === 0 && (
+          {anyAllocatedItems.length === 0 && (
             <div className="col-span-2 text-xs text-slate-400 italic py-6 text-center">
-              No physical cards are currently shared simultaneously across 2+ active decks.
+              No physical cards are currently allocated to active decks.
             </div>
           )}
         </div>
