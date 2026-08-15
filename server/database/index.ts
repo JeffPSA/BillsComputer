@@ -476,48 +476,88 @@ export class DatabaseManager {
         );
       }
 
-      // Upsert decks
-      for (const deck of data.decks || []) {
-        this.db.prepare(`
-          INSERT INTO decks (id, name, version, format, status, isPermanentlyAssembled, notes, updatedAt)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            version = excluded.version,
-            format = excluded.format,
-            status = excluded.status,
-            isPermanentlyAssembled = excluded.isPermanentlyAssembled,
-            notes = excluded.notes,
-            updatedAt = excluded.updatedAt
-        `).run(
-          deck.id,
-          deck.name,
-          deck.version,
-          deck.format,
-          deck.status,
-          deck.isPermanentlyAssembled ? 1 : 0,
-          deck.notes,
-          deck.updatedAt
+      // Decks: reconcile so SQLite exactly matches incoming state (delete rows whose id is absent).
+      // Guarded by !== undefined so partial writeDb callers cannot wipe decks.
+      // deck_requirements are reconciled in the same block (child before parent for FK safety).
+      if (data.decks !== undefined) {
+        const incomingDeckIds = new Set(
+          (data.decks as Deck[]).map((d) => d.id)
         );
+        const existingDeckIds = (
+          this.db.prepare('SELECT id FROM decks').all() as { id: string }[]
+        ).map((r) => r.id);
+
+        const staleIds = existingDeckIds.filter((id) => !incomingDeckIds.has(id));
+        if (staleIds.length > 0) {
+          // Delete child rows first to respect FK constraints, even though CASCADE would handle it
+          const deleteReqStmt = this.db.prepare('DELETE FROM deck_requirements WHERE deckId = ?');
+          const deleteDeckStmt = this.db.prepare('DELETE FROM decks WHERE id = ?');
+          for (const staleId of staleIds) {
+            deleteReqStmt.run(staleId);
+            deleteDeckStmt.run(staleId);
+          }
+        }
+
+        for (const deck of data.decks) {
+          this.db.prepare(`
+            INSERT INTO decks (id, name, version, format, status, isPermanentlyAssembled, notes, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              version = excluded.version,
+              format = excluded.format,
+              status = excluded.status,
+              isPermanentlyAssembled = excluded.isPermanentlyAssembled,
+              notes = excluded.notes,
+              updatedAt = excluded.updatedAt
+          `).run(
+            deck.id,
+            deck.name,
+            deck.version,
+            deck.format,
+            deck.status,
+            deck.isPermanentlyAssembled ? 1 : 0,
+            deck.notes,
+            deck.updatedAt
+          );
+        }
       }
 
-      // Upsert deck requirements
-      for (const req of data.deckRequirements || []) {
-        this.db.prepare(`
-          INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            deckId = excluded.deckId,
-            cardId = excluded.cardId,
-            quantity = excluded.quantity,
-            requirementMode = excluded.requirementMode
-        `).run(
-          req.id,
-          req.deckId,
-          req.cardId,
-          req.quantity,
-          req.requirementMode
+      // Deck requirements: reconcile so SQLite exactly matches incoming state (delete stale rows).
+      // Guarded by !== undefined. Stale-deck requirements are already removed above; this handles
+      // requirements removed from an existing deck (e.g. card removed from deck).
+      if (data.deckRequirements !== undefined) {
+        const incomingReqIds = new Set(
+          (data.deckRequirements as DeckRequirement[]).map((r) => r.id)
         );
+        const existingReqIds = (
+          this.db.prepare('SELECT id FROM deck_requirements').all() as { id: string }[]
+        ).map((r) => r.id);
+
+        const deleteReqByIdStmt = this.db.prepare('DELETE FROM deck_requirements WHERE id = ?');
+        for (const existingId of existingReqIds) {
+          if (!incomingReqIds.has(existingId)) {
+            deleteReqByIdStmt.run(existingId);
+          }
+        }
+
+        for (const req of data.deckRequirements) {
+          this.db.prepare(`
+            INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              deckId = excluded.deckId,
+              cardId = excluded.cardId,
+              quantity = excluded.quantity,
+              requirementMode = excluded.requirementMode
+          `).run(
+            req.id,
+            req.deckId,
+            req.cardId,
+            req.quantity,
+            req.requirementMode
+          );
+        }
       }
 
       // Allocations: when the caller provides a complete allocations array, reconcile so

@@ -25,6 +25,7 @@ interface DeckListProps {
   onOpenImportModal: () => void;
   onAssembleDeck: (deckId: string) => void;
   onHuntMissingCards?: (deckId: string) => void;
+  onDeckDeleted?: () => void;
 }
 
 export const DeckList: React.FC<DeckListProps> = ({
@@ -36,6 +37,7 @@ export const DeckList: React.FC<DeckListProps> = ({
   onOpenImportModal,
   onAssembleDeck,
   onHuntMissingCards,
+  onDeckDeleted,
 }) => {
   const [copiedDeckId, setCopiedDeckId] = React.useState<string | null>(null);
   const [editingDeck, setEditingDeck] = useState<any | null>(null);
@@ -272,8 +274,11 @@ export const DeckList: React.FC<DeckListProps> = ({
           onClose={() => setEditingDeck(null)}
           onSaveSuccess={() => {
             setEditingDeck(null);
-            // Refresh parent state if needed
-            window.location.reload();
+            onDeckDeleted?.();
+          }}
+          onDeleted={() => {
+            setEditingDeck(null);
+            onDeckDeleted?.();
           }}
         />
       )}
