@@ -1,0 +1,8 @@
+npm test: PASS (8 files)
+npm run lint: PASS
+npm run build: PASS
+duplicate identity query: 0 rows
+API: auto-allocate twice => qty unchanged (8), uniqueIdentities=2, dupes=0
+API: manual allocate creates/merges locked row; survives subsequent auto-allocate
+API: partial release reduces quantity; over-allocate returns 400; bad release 404
+live migration: idx_allocations_identity present; duplicates removed (keep-newest)

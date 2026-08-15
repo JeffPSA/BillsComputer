@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  pokemon-tcg-deck-builder:
+    build: .
+    container_name: pokemon-tcg-deck-builder
+    ports:
+      - "3000:3000"
+    volumes:
+      # Bind mount for SQLite database persistence
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/app/data
+      - DB_PATH=/app/data/cards.db
+      - APP_PASSWORD=${APP_PASSWORD:-your_password_here}
+    restart: unless-stopped

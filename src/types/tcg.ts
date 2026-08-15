@@ -47,6 +47,28 @@ export type CardVariant =
 
 export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'Damaged';
 
+export interface PokemonTcgSet {
+  id: string;
+  name: string;
+  series: string;
+  ptcgoCode?: string;
+  releaseDate: string;
+  printedTotal: number;
+  total: number;
+  updatedAt: string;
+}
+
+export interface CardSet {
+  id: string;
+  name: string;
+  series: string;
+  ptcgoCode?: string;
+  releaseDate: string;
+  printedTotal: number;
+  total: number;
+  updatedAt: string;
+}
+
 export interface LogicalCard {
   id: string;
   name: string;
@@ -72,6 +94,48 @@ export interface CardPrinting {
   language: string;
   imageUrl: string;
   marketPrice: number;
+  // Extended fields from Pokémon TCG API
+  attacks?: Attack[];
+  abilities?: Ability[];
+  weaknesses?: Weakness[];
+  resistances?: Resistance[];
+  retreatCost?: number;
+  nationalPokedexNumbers?: number[];
+  regulationMark?: string;
+  legalities?: Legalities;
+  artist?: string;
+  imageUrlSmall?: string;
+  imageUrlLarge?: string;
+}
+
+export interface Attack {
+  name: string;
+  cost?: string[];
+  convertedEnergyCost?: number;
+  damage?: string;
+  text?: string;
+}
+
+export interface Ability {
+  name: string;
+  text: string;
+  type: string;
+}
+
+export interface Weakness {
+  type: string;
+  value: string;
+}
+
+export interface Resistance {
+  type: string;
+  value: string;
+}
+
+export interface Legalities {
+  unlimited?: boolean;
+  standard?: boolean;
+  expanded?: boolean;
 }
 
 export interface CollectionItem {
