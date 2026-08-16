@@ -12,6 +12,9 @@ import {
   LogOut
 } from 'lucide-react';
 
+import pokeIcon from "/android-chrome-192x192.png";
+
+
 export type ActiveTab =
   | 'dashboard'
   | 'decks'
@@ -56,8 +59,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center justify-between h-16">
           {/* Logo & Branding */}
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
-            <div className="w-9 h-9 bg-yellow-400 rounded-full border-2 border-indigo-900 shadow-md flex items-center justify-center font-black text-indigo-950 text-base">
-              🎴
+            <div className="w-9 h-9 shadow-md flex items-center">
+              <img
+                src={pokeIcon}
+                alt=""
+                className="w-8 h-8 object-contain"
+              />
             </div>
             <div>
               <span className="font-black text-xl italic uppercase tracking-tighter text-white">
