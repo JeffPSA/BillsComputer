@@ -12,7 +12,6 @@ import {
   LogOut
 } from 'lucide-react';
 
-import pokeIcon from "/android-chrome-192x192.png";
 
 
 export type ActiveTab =
@@ -61,7 +60,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
             <div className="w-9 h-9 shadow-md flex items-center">
               <img
-                src={pokeIcon}
+                src="/android-chrome-192x192.png"
                 alt=""
                 className="w-8 h-8 object-contain"
               />
