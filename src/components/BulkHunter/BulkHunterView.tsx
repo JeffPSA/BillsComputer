@@ -217,85 +217,148 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
                   </span>
                 </div>
 
-                {/* Items List */}
+                {/* Items List — sub-grouped by regulation mark */}
                 <div className="divide-y divide-slate-100">
-                  {group.items.map((item: any) => {
-                    const found = foundCounts[item.cardId] || 0;
-                    const isFullyFound = found >= item.needQty;
+                  {(() => {
+                    const rows: React.ReactNode[] = [];
+                    let lastMark: string | null = undefined as any;
 
-                    return (
-                      <div
-                        key={item.cardId}
-                        onClick={() => handleIncrementFound(item.cardId, item.needQty)}
-                        className={`p-4 flex items-center justify-between gap-4 cursor-pointer select-none transition ${
-                          isFullyFound ? 'bg-emerald-50/60' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3">
-                          <img
-                            src={getImageUrl(item.printing, { name: item.cardName })}
-                            alt={item.cardName}
-                            onError={handleImageError}
-                            className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 bg-slate-100"
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="space-y-1">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
-                              <span className="text-[10px] px-2.5 py-0.5 bg-slate-100 text-slate-700 font-bold rounded-lg border border-slate-200">
-                                {item.supertype}
-                              </span>
-                            </div>
+                    // Rarity colour coding
+                    const rarityStyle = (rarity: string | null): string => {
+                      if (!rarity) return 'bg-slate-100 text-slate-500 border-slate-200';
+                      const r = rarity.toLowerCase();
+                      if (r.includes('ace spec'))                   return 'bg-purple-100 text-purple-800 border-purple-300';
+                      if (r.includes('hyper') || r.includes('special illustration')) return 'bg-pink-100 text-pink-800 border-pink-300';
+                      if (r.includes('illustration'))               return 'bg-violet-100 text-violet-800 border-violet-300';
+                      if (r.includes('ultra'))                      return 'bg-orange-100 text-orange-800 border-orange-300';
+                      if (r.includes('double'))                     return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+                      if (r === 'rare' || r.includes('holo') || r.includes('radiant')) return 'bg-amber-100 text-amber-800 border-amber-300';
+                      if (r === 'uncommon')                         return 'bg-blue-100 text-blue-800 border-blue-300';
+                      if (r === 'common')                           return 'bg-slate-100 text-slate-600 border-slate-200';
+                      return 'bg-slate-100 text-slate-500 border-slate-200';
+                    };
 
-                            <div className="text-xs text-slate-500 font-medium">
-                              {item.printing ? `${item.printing.setName} (${item.printing.setCode} #${item.printing.cardNumber})` : 'Any Printing'}
-                            </div>
-                          </div>
-                        </div>
+                    // Regulation mark colour
+                    const markStyle = (mark: string | null): string => {
+                      if (!mark) return 'bg-slate-200 text-slate-600';
+                      switch (mark.toUpperCase()) {
+                        case 'G': return 'bg-green-600 text-white';
+                        case 'H': return 'bg-sky-600 text-white';
+                        case 'I': return 'bg-indigo-600 text-white';
+                        case 'J': return 'bg-rose-600 text-white';
+                        default:  return 'bg-slate-500 text-white';
+                      }
+                    };
 
-                        {/* Interactive Tap Counter & Quick Fill */}
-                        <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => {
-                              setFoundCounts((prev) => ({
-                                ...prev,
-                                [item.cardId]: isFullyFound ? 0 : item.needQty,
-                              }));
-                            }}
-                            className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase transition ${
-                              isFullyFound
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                : 'bg-slate-100 hover:bg-yellow-400 text-slate-700 hover:text-indigo-950 border border-slate-200'
-                            }`}
-                          >
-                            {isFullyFound ? 'Found All' : `Fill All (${item.needQty})`}
-                          </button>
+                    for (const item of group.items) {
+                      const mark = item.regulationMark ?? null;
 
+                      // Inject a sub-header when the regulation mark changes
+                      if (mark !== lastMark) {
+                        lastMark = mark;
+                        rows.push(
                           <div
-                            onClick={() => handleIncrementFound(item.cardId, item.needQty)}
-                            className={`px-3.5 py-2 rounded-2xl text-xs font-black transition flex items-center space-x-1.5 cursor-pointer ${
-                              isFullyFound
-                                ? 'bg-emerald-600 text-white shadow-xs'
-                                : found > 0
-                                ? 'bg-yellow-400 text-indigo-950 shadow-xs'
-                                : 'bg-slate-100 text-slate-700 border border-slate-200'
-                            }`}
+                            key={`mark-${gIdx}-${mark ?? 'none'}`}
+                            className="flex items-center gap-2 px-5 py-2 bg-slate-50 border-b border-slate-200"
                           >
-                            {isFullyFound ? (
-                              <>
-                                <Check className="w-4 h-4 stroke-[3]" />
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black ${markStyle(mark)}`}>
+                              {mark ?? '?'}
+                            </span>
+                            <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">
+                              {mark ? `Regulation ${mark.toUpperCase()} — ${mark.toUpperCase() === 'G' ? 'Oldest Standard' : mark.toUpperCase() === 'H' ? 'Previous Standard' : mark.toUpperCase() === 'I' ? 'Current Standard' : mark.toUpperCase() === 'J' ? 'Newest' : 'Other'}` : 'Unknown Regulation'}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      const found = foundCounts[item.cardId] || 0;
+                      const isFullyFound = found >= item.needQty;
+
+                      rows.push(
+                        <div
+                          key={item.cardId}
+                          onClick={() => handleIncrementFound(item.cardId, item.needQty)}
+                          className={`p-4 flex items-center justify-between gap-4 cursor-pointer select-none transition ${
+                            isFullyFound ? 'bg-emerald-50/60' : 'hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <img
+                              src={getImageUrl(item.printing, { name: item.cardName })}
+                              alt={item.cardName}
+                              onError={handleImageError}
+                              className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 bg-slate-100"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="space-y-1">
+                              <div className="flex items-center flex-wrap gap-1.5">
+                                <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
+                                {/* Regulation mark badge */}
+                                {mark && (
+                                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${markStyle(mark)}`}>
+                                    {mark.toUpperCase()}
+                                  </span>
+                                )}
+                                {/* Rarity badge */}
+                                {item.rarity && (
+                                  <span className={`text-[10px] px-2 py-0.5 rounded-lg border font-bold ${rarityStyle(item.rarity)}`}>
+                                    {item.rarity}
+                                  </span>
+                                )}
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-600 font-bold rounded-lg border border-slate-200">
+                                  {item.supertype}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500 font-medium">
+                                {item.printing ? `${item.printing.setName} (${item.printing.setCode} #${item.printing.cardNumber})` : 'Any Printing'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Interactive Tap Counter & Quick Fill */}
+                          <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => {
+                                setFoundCounts((prev) => ({
+                                  ...prev,
+                                  [item.cardId]: isFullyFound ? 0 : item.needQty,
+                                }));
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-[11px] font-black uppercase transition ${
+                                isFullyFound
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  : 'bg-slate-100 hover:bg-yellow-400 text-slate-700 hover:text-indigo-950 border border-slate-200'
+                              }`}
+                            >
+                              {isFullyFound ? 'Found All' : `Fill All (${item.needQty})`}
+                            </button>
+
+                            <div
+                              onClick={() => handleIncrementFound(item.cardId, item.needQty)}
+                              className={`px-3.5 py-2 rounded-2xl text-xs font-black transition flex items-center space-x-1.5 cursor-pointer ${
+                                isFullyFound
+                                  ? 'bg-emerald-600 text-white shadow-xs'
+                                  : found > 0
+                                  ? 'bg-yellow-400 text-indigo-950 shadow-xs'
+                                  : 'bg-slate-100 text-slate-700 border border-slate-200'
+                              }`}
+                            >
+                              {isFullyFound ? (
+                                <>
+                                  <Check className="w-4 h-4 stroke-[3]" />
+                                  <span>{found}/{item.needQty}</span>
+                                </>
+                              ) : (
                                 <span>{found}/{item.needQty}</span>
-                              </>
-                            ) : (
-                              <span>
-                                {found}/{item.needQty}
-                              </span>
-                            )}
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+
+                    return rows;
+                  })()}
                 </div>
               </div>
             ))}

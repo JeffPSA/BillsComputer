@@ -270,7 +270,7 @@ export function transformApiSetToSet(apiSet: PokemonTcgSet): CardSet {
 /**
  * Parses a search query into structured components for intelligent search.
  */
-interface ParsedQuery {
+export interface ParsedQuery {
   cardName: string;
   setCode: string;
   cardNumber: string;
@@ -279,7 +279,7 @@ interface ParsedQuery {
   suspectedSetCodes: string[]; // Store potential set codes for validation
 }
 
-async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
+export async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
   const clean = rawQuery.trim();
   const tokens = clean.split(/\s+/).filter(Boolean);
   
