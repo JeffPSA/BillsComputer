@@ -1069,20 +1069,65 @@ async function startServer() {
         cardName: card.name,
         supertype: card.supertype,
         subtype: card.subtype,
+        rarity: printing?.rarity ?? null,
+        regulationMark: printing?.regulationMark ?? null,
         printing,
         needQty: item.missing,
         foundQty: 0,
       });
     }
 
+    // Rarity sort order — lower number = searched first (bulk box order)
+    const RARITY_ORDER: Record<string, number> = {
+      'Common': 0,
+      'Uncommon': 1,
+      'Rare': 2,
+      'Rare Holo': 3,
+      'Holo Rare': 3,
+      'Double Rare': 4,
+      'Ultra Rare': 5,
+      'Illustration Rare': 6,
+      'Special Illustration Rare': 7,
+      'Hyper Rare': 8,
+      'ACE SPEC': 9,
+      'Radiant Rare': 10,
+      'Promo': 11,
+    };
+
+    function rarityRank(rarity: string | null): number {
+      if (!rarity) return 99;
+      return RARITY_ORDER[rarity] ?? 99;
+    }
+
+    // Regulation marks sort order (G = oldest current standard, ascending)
+    const REGULATION_ORDER: Record<string, number> = {
+      'G': 0, 'H': 1, 'I': 2, 'J': 3,
+    };
+
+    function regulationRank(mark: string | null): number {
+      if (!mark) return 99;
+      const upper = mark.toUpperCase();
+      return REGULATION_ORDER[upper] ?? 50; // unknown marks after known, before null
+    }
+
     const groupedList = Array.from(categoryMap.entries())
       .filter(([_, items]) => items.length > 0)
       .map(([categoryName, items]) => {
         const catInfo = storeProfile.categories.find((c) => c.name === categoryName);
+        const sortedItems = items.sort((a: any, b: any) => {
+          // 1. Regulation mark (G → H → I → J → unknown → none)
+          const regDiff = regulationRank(a.regulationMark) - regulationRank(b.regulationMark);
+          if (regDiff !== 0) return regDiff;
+          // 2. Rarity (Common → Uncommon → Rare → ...)
+          const rarDiff = rarityRank(a.rarity) - rarityRank(b.rarity);
+          if (rarDiff !== 0) return rarDiff;
+          // 3. Alphabetical
+          return a.cardName.localeCompare(b.cardName);
+        });
         return {
           categoryName,
           sortOrder: catInfo ? catInfo.sortOrder : 99,
-          items: items.sort((a, b) => a.cardName.localeCompare(b.cardName)),
+          items: sortedItems,
         };
       })
       .sort((a, b) => a.sortOrder - b.sortOrder);

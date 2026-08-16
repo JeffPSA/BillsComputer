@@ -20,7 +20,7 @@ export interface SearchFilters {
  * Normalizes text for robust search while preserving meaningful characters.
  * Preserves accented characters (é, ñ, etc.) for better Pokémon name matching.
  */
-function normalizeText(text: string): string {
+export function normalizeText(text: string): string {
   if (!text) return '';
   return text
     .toLowerCase()
