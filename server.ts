@@ -62,6 +62,7 @@ interface AdminSyncJob {
   running: boolean;
   stopRequested?: boolean;
   mode?: AdminSyncMode;
+  source?: 'admin' | 'dashboard';
   startedAt?: string;
   finishedAt?: string;
   status?: 'idle' | 'running' | 'completed' | 'stopped' | 'failed';
@@ -230,7 +231,7 @@ function resolveAdminSetCode(rawSetCode: string): { id: string; name?: string } 
   return set ? { id: set.id, name: set.name } : null;
 }
 
-function startAdminSync(mode: AdminSyncMode, setId?: string): AdminSyncJob {
+function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | 'dashboard' = 'admin'): AdminSyncJob {
   if (adminSyncJob.running) {
     return adminSyncJob;
   }
@@ -239,6 +240,7 @@ function startAdminSync(mode: AdminSyncMode, setId?: string): AdminSyncJob {
     running: true,
     stopRequested: false,
     mode,
+    source,
     setId,
     status: 'running',
     startedAt: new Date().toISOString(),
@@ -271,12 +273,14 @@ function startAdminSync(mode: AdminSyncMode, setId?: string): AdminSyncJob {
 
   syncPromise
     .then((stats) => {
+      const finishedAt = new Date().toISOString();
+      const status = stats.stopped ? 'stopped' : 'completed';
       adminSyncJob = {
         ...adminSyncJob,
         running: false,
         stopRequested: false,
-        finishedAt: new Date().toISOString(),
-        status: stats.stopped ? 'stopped' : 'completed',
+        finishedAt,
+        status,
         progress: {
           phase: stats.stopped ? 'stopped' : 'complete',
           message: stats.stopped ? 'Sync stopped safely' : 'Sync complete',
@@ -286,16 +290,30 @@ function startAdminSync(mode: AdminSyncMode, setId?: string): AdminSyncJob {
         },
         stats,
       };
+
+      if (source === 'dashboard') {
+        dbManager.setSyncMetadataValue('dashboardRoutineLastRunAt', finishedAt);
+        dbManager.setSyncMetadataValue('dashboardRoutineLastStatus', status);
+        dbManager.setSyncMetadataValue('dashboardRoutineLastStats', stats);
+      }
     })
     .catch((err: any) => {
       console.error('[Admin] Sync failed:', err);
+      const finishedAt = new Date().toISOString();
       adminSyncJob = {
         ...adminSyncJob,
         running: false,
         stopRequested: false,
-        finishedAt: new Date().toISOString(),
+        finishedAt,
+        status: 'failed',
         error: err?.message || 'Sync failed',
       };
+
+      if (source === 'dashboard') {
+        dbManager.setSyncMetadataValue('dashboardRoutineLastRunAt', finishedAt);
+        dbManager.setSyncMetadataValue('dashboardRoutineLastStatus', 'failed');
+        dbManager.setSyncMetadataValue('dashboardRoutineLastStats', { error: err?.message || 'Sync failed' });
+      }
     });
 
   return adminSyncJob;
@@ -307,6 +325,7 @@ async function startServer() {
 
   // --- AUTHENTICATION ---
   const appPassword = process.env.APP_PASSWORD || 'default-password';
+  const dashboardApiToken = process.env.DASHBOARD_API_TOKEN || process.env.HOME_DASHBOARD_API_TOKEN || '';
   const validTokens = new Set<string>();
 
   // Generate a simple random token
@@ -315,11 +334,26 @@ async function startServer() {
   }
 
   // Authentication middleware
-  const requireAuth = (req: any, res: any, next: any) => {
+  function getBearerToken(req: any): string {
     const authHeader = req.headers.authorization;
-    const token = authHeader?.replace('Bearer ', '');
+    return authHeader?.replace('Bearer ', '') || '';
+  }
+
+  const requireAuth = (req: any, res: any, next: any) => {
+    const token = getBearerToken(req);
 
     if (!token || !validTokens.has(token)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    next();
+  };
+
+  const requireDashboardAuth = (req: any, res: any, next: any) => {
+    const token = getBearerToken(req);
+    const isLoggedInAppToken = token && validTokens.has(token);
+    const isDashboardToken = Boolean(dashboardApiToken) && token === dashboardApiToken;
+
+    if (!isLoggedInAppToken && !isDashboardToken) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
     next();
@@ -371,6 +405,43 @@ async function startServer() {
     } catch (err: any) {
       console.error('[Server] Error in /api/cards/sync-status:', err);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/dashboard/weekly-routine (Protected home-dashboard summary)
+  app.get('/api/dashboard/weekly-routine', requireDashboardAuth, (req, res) => {
+    try {
+      const days = Number(req.query.days || 7);
+      res.json({
+        success: true,
+        ...dbManager.getDashboardWeeklySummary(days),
+        syncJob: adminSyncJob,
+      });
+    } catch (err: any) {
+      console.error('[DashboardAPI] Error reading weekly routine summary:', err);
+      res.status(500).json({ success: false, error: 'Unable to read weekly dashboard summary' });
+    }
+  });
+
+  // POST /api/dashboard/weekly-routine/run (Protected idempotent routine trigger)
+  app.post('/api/dashboard/weekly-routine/run', requireDashboardAuth, (req, res) => {
+    try {
+      const requestedMode = req.body?.mode;
+      const mode: AdminSyncMode = requestedMode === 'incremental' ? 'incremental' : 'sets-only';
+      const alreadyRunning = adminSyncJob.running;
+      const syncJob = startAdminSync(mode, undefined, 'dashboard');
+
+      res.status(202).json({
+        success: true,
+        started: !alreadyRunning,
+        alreadyRunning,
+        message: alreadyRunning ? 'A sync routine is already running' : 'Weekly dashboard routine started',
+        syncJob,
+        summary: dbManager.getDashboardWeeklySummary(7),
+      });
+    } catch (err: any) {
+      console.error('[DashboardAPI] Error starting weekly routine:', err);
+      res.status(500).json({ success: false, error: 'Unable to start weekly dashboard routine' });
     }
   });
 

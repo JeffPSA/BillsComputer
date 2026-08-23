@@ -1668,6 +1668,73 @@ export class DatabaseManager {
     };
   }
 
+  getDashboardWeeklySummary(days = 7): any {
+    const safeDays = Math.max(1, Math.min(90, Math.floor(Number(days) || 7)));
+    const until = new Date();
+    const since = new Date(until.getTime() - safeDays * 24 * 60 * 60 * 1000);
+    const sinceIso = since.toISOString();
+    const sinceDate = sinceIso.slice(0, 10);
+    const syncMetadata = this.getSyncMetadata();
+    const pendingFailedSets = Array.isArray(syncMetadata.failedSetIds) ? syncMetadata.failedSetIds : [];
+
+    const setReleaseRow = this.db
+      .prepare('SELECT COUNT(*) as count FROM sets WHERE releaseDate >= ?')
+      .get(sinceDate) as { count: number };
+    const setUpdateRow = this.db
+      .prepare('SELECT COUNT(*) as count FROM sets WHERE updatedAt >= ?')
+      .get(sinceIso) as { count: number };
+    const collectionRow = this.db.prepare(`
+      SELECT COUNT(*) as itemCount, COALESCE(SUM(quantity), 0) as quantity
+      FROM collection_items
+      WHERE acquisitionDate >= ?
+    `).get(sinceIso) as { itemCount: number; quantity: number };
+    const acquisitionRow = this.db.prepare(`
+      SELECT COUNT(*) as entryCount, COALESCE(SUM(quantity), 0) as quantity, COALESCE(SUM(totalCost), 0) as totalCost
+      FROM acquisitions
+      WHERE date >= ?
+    `).get(sinceIso) as { entryCount: number; quantity: number; totalCost: number };
+    const deckUpdateRow = this.db
+      .prepare('SELECT COUNT(*) as count FROM decks WHERE updatedAt >= ?')
+      .get(sinceIso) as { count: number };
+
+    const lastSyncAt = typeof syncMetadata.lastSyncTimestamp === 'string' ? syncMetadata.lastSyncTimestamp : null;
+    const lastSyncTime = lastSyncAt ? new Date(lastSyncAt).getTime() : 0;
+
+    return {
+      generatedAt: until.toISOString(),
+      window: {
+        days: safeDays,
+        since: sinceIso,
+        until: until.toISOString(),
+      },
+      database: this.getStats(),
+      sevenDayCounts: {
+        recentSetReleases: setReleaseRow.count,
+        recentSetMetadataUpdates: setUpdateRow.count,
+        collectionItemsAdded: collectionRow.itemCount,
+        collectionQuantityAdded: collectionRow.quantity,
+        acquisitionEntries: acquisitionRow.entryCount,
+        acquisitionQuantity: acquisitionRow.quantity,
+        acquisitionTotalCost: acquisitionRow.totalCost,
+        decksUpdated: deckUpdateRow.count,
+        syncRanInWindow: lastSyncTime >= since.getTime(),
+        pendingFailedSets: pendingFailedSets.length,
+      },
+      sync: {
+        lastSyncTimestamp: lastSyncAt,
+        lastSyncedSetId: syncMetadata.lastSyncedSetId || null,
+        lastSyncedPage: syncMetadata.lastSyncedPage || null,
+        lastSyncCompletedWithFailures: Boolean(syncMetadata.lastSyncCompletedWithFailures),
+        pendingFailedSetIds: pendingFailedSets,
+      },
+      routine: {
+        lastRunAt: syncMetadata.dashboardRoutineLastRunAt || null,
+        lastStatus: syncMetadata.dashboardRoutineLastStatus || null,
+        lastStats: syncMetadata.dashboardRoutineLastStats || null,
+      },
+    };
+  }
+
   /**
    * Close database connection
    */

@@ -168,6 +168,21 @@ Tasks:
 - Pending: add pagination or virtualization for large card lists if still needed after data-loading fixes.
 - Done: verify production build behavior, not only local dev behavior.
 
+## Phase 10: Home Dashboard API
+
+Status: in progress
+
+Goal: expose safe API routes for an external home dashboard to inspect and trigger the weekly database routine.
+
+Tasks:
+
+- Done: add a protected read-only weekly routine summary endpoint.
+- Done: add a protected idempotent routine trigger endpoint that reuses the existing sync job guard.
+- Done: support a stable `DASHBOARD_API_TOKEN` / `HOME_DASHBOARD_API_TOKEN` bearer token for external dashboards.
+- Done: keep normal logged-in app bearer tokens working for the same routes.
+- Done: return 7-day counts, database totals, sync state, pending failed sets, and last dashboard routine result.
+- Pending: test against the real home dashboard client once it exists.
+
 ## Later: Database Card Browser
 
 Status: done
@@ -183,24 +198,23 @@ Notes:
 - Done: make Wishlist persistent in SQLite so browser-added targets appear on the Wishlist page.
 - Done: keep it SQLite-first and paginated so it does not slow the hosted server down.
 - Done: Browser now paginates exact stored printings instead of grouping all variants under one logical card.
-- Later: split Pokemon TCG API price finishes such as Normal, Holo, and Reverse Holo into separate SQLite printing rows during sync, so variants that share one API card ID can be collected separately.
+- Later: split Pokemon TCG API price finishes such as Normal, Holo, Reverse Holo, and promo/cosmo holo variants into separate SQLite printing rows during sync, so variants that share one API card ID can be collected separately.
 - Later: add master-set completion progress by set if/when needed.
 
-## Later: Home Dashboard Routine API
+## Later: Home Dashboard Routine API Polish
 
-Status: later
+Status: in progress
 
 Goal: expose a safe API route for an external home dashboard to run or inspect a weekly database routine.
 
 Notes:
 
-- Add a protected API route for a weekly catalogue/database routine.
-- Return 7-day counts for cards, printings, sets, collection changes, deck changes, sync failures, and successful sync activity.
+- Done: add a protected API route for a weekly catalogue/database routine.
+- Done: return 7-day counts for recent set releases, set metadata updates, collection changes, deck changes, sync failures, and successful sync activity.
 - Keep it dashboard-friendly: concise JSON, timestamps, status, and last-run summary.
-- Make the routine idempotent so repeated dashboard calls do not start duplicate work.
-- Consider a separate read-only route for the dashboard and a protected action route to trigger the routine.
-- Do this much later after admin sync behavior and performance work are stable.
--  Create API documentation to follow for beginner to implement. Include examples
+- Done: make the routine idempotent so repeated dashboard calls do not start duplicate work.
+- Done: add a separate read-only route for the dashboard and a protected action route to trigger the routine.
+- Done: create API documentation to follow for beginner to implement, including examples.
 
 
 ## Later: ZAR Pricing
@@ -231,7 +245,7 @@ Notes:
 8. Dark mode.
 9. Admin portal.
 10. Performance pass.
-11. Later: database card browser.
-12. Later: home dashboard weekly routine API.
+11. Database card browser.
+12. Home dashboard weekly routine API.
 13. Later: ZAR pricing.
 14. Later: Dynamic Web fetch USD to ZAR conversion
