@@ -8,9 +8,11 @@ import {
   RefreshCw,
   ShieldCheck,
   RotateCcw,
+  Save,
   Square,
 } from 'lucide-react';
-import { createAdminBackup, fetchAdminHealth, startAdminSync, stopAdminSync } from '../../services/api';
+import { createAdminBackup, fetchAdminHealth, startAdminSync, stopAdminSync, updateCurrencySettings } from '../../services/api';
+import { setUsdToZarRate } from '../../utils/currency';
 
 export const AdminPortal: React.FC = () => {
   const [health, setHealth] = useState<any | null>(null);
@@ -19,6 +21,8 @@ export const AdminPortal: React.FC = () => {
   const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [setCode, setSetCode] = useState('');
+  const [exchangeRate, setExchangeRate] = useState('18.5');
+  const [exchangeSaving, setExchangeSaving] = useState(false);
 
   const refreshHealth = async () => {
     setLoading(true);
@@ -39,6 +43,13 @@ export const AdminPortal: React.FC = () => {
     const timer = window.setInterval(refreshHealth, 3000);
     return () => window.clearInterval(timer);
   }, [health?.syncJob?.running]);
+
+  useEffect(() => {
+    if (health?.currency?.usdToZarRate) {
+      setExchangeRate(String(health.currency.usdToZarRate));
+      setUsdToZarRate(Number(health.currency.usdToZarRate));
+    }
+  }, [health?.currency?.usdToZarRate]);
 
   const handleSync = async (mode: 'incremental' | 'force' | 'sets-only') => {
     const label =
@@ -102,8 +113,34 @@ export const AdminPortal: React.FC = () => {
     }
   };
 
+  const handleSaveExchangeRate = async () => {
+    const nextRate = Number(exchangeRate);
+    if (!Number.isFinite(nextRate) || nextRate <= 0) {
+      setActionMessage('Enter a valid USD to ZAR rate greater than 0.');
+      return;
+    }
+
+    setExchangeSaving(true);
+    setActionMessage('Saving ZAR exchange rate...');
+    try {
+      const result = await updateCurrencySettings(nextRate);
+      if (!result.success) {
+        throw new Error(result.error || 'Unable to save exchange rate');
+      }
+      setUsdToZarRate(Number(result.usdToZarRate));
+      setExchangeRate(String(result.usdToZarRate));
+      setActionMessage(`Exchange rate saved: 1 USD = R${Number(result.usdToZarRate).toFixed(4)}`);
+      await refreshHealth();
+    } catch (err: any) {
+      setActionMessage(err?.message || 'Unable to save exchange rate');
+    } finally {
+      setExchangeSaving(false);
+    }
+  };
+
   const stats = health?.stats || {};
   const metadata = health?.syncMetadata || {};
+  const currency = health?.currency || {};
   const syncJob = health?.syncJob || {};
   const progress = syncJob.progress || {};
   const integrity = health?.allocationIntegrity;
@@ -312,6 +349,34 @@ export const AdminPortal: React.FC = () => {
               {backupMessage.text}
             </div>
           )}
+
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">Currency Display</div>
+              <div className="text-xs font-bold text-slate-700">
+                Current rate: <span className="font-black text-slate-900">1 USD = R{Number(currency.usdToZarRate || 18.5).toFixed(4)}</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="number"
+                min="0.01"
+                step="0.0001"
+                value={exchangeRate}
+                onChange={(e) => setExchangeRate(e.target.value)}
+                className="min-w-0 flex-1 bg-white border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 font-bold"
+              />
+              <button
+                onClick={handleSaveExchangeRate}
+                disabled={exchangeSaving}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white text-xs font-black uppercase rounded-2xl transition"
+              >
+                {exchangeSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 stroke-[2.5]" />}
+                <span>Save Rate</span>
+              </button>
+            </div>
+          </div>
 
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 space-y-2 font-medium">
             <div className="flex items-start gap-2">

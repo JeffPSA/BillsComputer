@@ -3,6 +3,7 @@ import { Box, Search, Loader2, AlertCircle, Eye } from 'lucide-react';
 import { updateCollectionItem, searchCardsApi } from '../services/api';
 import { getImageUrl, handleImageError } from '../utils/imageUtils';
 import { CardDetailModal } from './CardDetailModal';
+import { formatZarFromUsd, usdToZar } from '../utils/currency';
 
 interface QuickAddCollectionModalProps {
   allCards: any[];
@@ -26,7 +27,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
   const [quantity, setQuantity] = useState(1);
   const [condition, setCondition] = useState('NM');
   const [source, setSource] = useState('Local Game Store Single');
-  const [cost, setCost] = useState('1.00');
+  const [cost, setCost] = useState(usdToZar(1).toFixed(2));
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -70,7 +71,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
     if (printings.length > 0) {
       setSelectedPrintingId(printings[0].id);
       if (printings[0].marketPrice) {
-        setCost(printings[0].marketPrice.toFixed(2));
+        setCost(usdToZar(printings[0].marketPrice).toFixed(2));
       }
     } else {
       setSelectedPrintingId(card.defaultPrintingId || '');
@@ -174,7 +175,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
                         <span className="truncate">{card.name}</span>
                         {defaultPrt?.marketPrice && (
                           <span className="text-emerald-700 font-black text-[11px] ml-2">
-                            ${defaultPrt.marketPrice.toFixed(2)}
+                            {formatZarFromUsd(defaultPrt.marketPrice)}
                           </span>
                         )}
                       </button>
@@ -260,13 +261,13 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
                   onChange={(e) => {
                     setSelectedPrintingId(e.target.value);
                     const prt = selectedCard.printings.find((p: any) => p.id === e.target.value);
-                    if (prt?.marketPrice) setCost(prt.marketPrice.toFixed(2));
+                    if (prt?.marketPrice) setCost(usdToZar(prt.marketPrice).toFixed(2));
                   }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                 >
                   {selectedCard.printings.map((p: any) => (
                     <option key={p.id} value={p.id}>
-                      {p.setName} ({p.setCode} #{p.cardNumber}) - {p.rarity || 'Normal'} (${(p.marketPrice || 1.0).toFixed(2)})
+                      {p.setName} ({p.setCode} #{p.cardNumber}) - {p.rarity || 'Normal'} ({formatZarFromUsd(p.marketPrice || 1.0)})
                     </option>
                   ))}
                 </select>
@@ -310,7 +311,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold uppercase text-slate-700">Cost per unit ($):</label>
+                <label className="text-xs font-bold uppercase text-slate-700">Cost per unit (ZAR):</label>
                 <input
                   type="text"
                   value={cost}

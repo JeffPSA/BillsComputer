@@ -12,6 +12,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { ActiveTab } from './Navbar';
+import { formatZarFromUsd } from '../utils/currency';
 
 interface DashboardProps {
   decks: any[];
@@ -56,7 +57,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="text-3xl font-black text-slate-900">{totalOwnedCards}</div>
           <div className="text-xs text-slate-500 flex items-center justify-between pt-1 font-medium">
             <span>{collection.length} Unique Printings</span>
-            <span className="text-emerald-700 font-bold">Est. ${totalEstimatedValue.toFixed(2)}</span>
+            <span className="text-emerald-700 font-bold">Est. {formatZarFromUsd(totalEstimatedValue)}</span>
           </div>
         </div>
 

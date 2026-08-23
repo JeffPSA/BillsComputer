@@ -176,7 +176,7 @@ Goal: add a database browser section for browsing every local card/printing in S
 
 Notes:
 
-- Make it useful for master set collecting later: filter by set, card type, rarity, ownership, wishlist state, and missing cards.
+- Make it useful for master set collecting: filter by set, card type, rarity, ownership, wishlist state, and missing cards.
 - Add direct actions from the browser to add cards to Collection.
 - Add direct actions from the browser to add cards to Wishlist so the Wishlist page becomes more useful.
 - Keep it SQLite-first and paginated/virtualized so it does not slow the hosted server down.
@@ -201,16 +201,19 @@ Notes:
 
 ## Later: ZAR Pricing
 
-Status: later
+Status: done
 
 Goal: show estimates and totals in South African Rand instead of US dollars.
 
 Notes:
 
-- Replace visible `$` labels with `R` / `ZAR` formatting.
-- Decide whether stored market prices stay as source USD and convert for display, or whether values are stored directly in ZAR.
-- Add a configurable exchange rate or admin-managed rate before relying on totals.
-- Update Collection, Shopping, Card Detail, acquisitions, and any summary totals together so currency is consistent.
+- Done: replace visible `$` labels with `ZAR` / `R` formatting across Dashboard, Collection, Deck card search, Card Detail, Quick Add, Shopping, and CSV export.
+- Done: keep stored API market prices unchanged and convert at display/export boundaries.
+- Done: make the display exchange rate configurable with `VITE_USD_TO_ZAR_RATE`, defaulting to `18.5` when unset.
+- Done: add an admin-managed exchange rate saved in SQLite metadata so the rate can change without redeploying.
+- Done: load the saved exchange rate after login and apply it to visible ZAR estimates.
+- Done: review hidden/import-only cost fields; acquisition writes now treat omitted costs as `0` and UI acquisition flows send ZAR values explicitly.
+- Later: add automatic exchange-rate lookup only if a reliable source is chosen.
 
 ## Immediate Order
 
@@ -227,3 +230,4 @@ Notes:
 11. Later: database card browser.
 12. Later: home dashboard weekly routine API.
 13. Later: ZAR pricing.
+14. Later: Dynamic Web fetch USD to ZAR conversion

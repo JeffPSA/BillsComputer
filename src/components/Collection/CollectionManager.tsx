@@ -21,6 +21,7 @@ import { Condition } from '../../types/tcg';
 import { CardDetailModal } from '../CardDetailModal';
 import { searchCards } from '../../services/cardSearch';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
+import { formatZarFromUsd } from '../../utils/currency';
 
 interface CollectionManagerProps {
   collection: any[];
@@ -156,7 +157,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
         </div>
         <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
           <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">ESTIMATED MARKET VALUE</div>
-          <div className="text-2xl font-black text-amber-600">${totalEstimatedValue.toFixed(2)}</div>
+          <div className="text-2xl font-black text-amber-600">{formatZarFromUsd(totalEstimatedValue)}</div>
         </div>
       </div>
 
@@ -290,7 +291,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
 
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-xs font-black text-amber-700">
-                      ${prt?.marketPrice ? (prt.marketPrice * item.quantity).toFixed(2) : '0.00'}
+                      {formatZarFromUsd((prt?.marketPrice || 0) * item.quantity)}
                     </div>
                     <div className="flex items-center gap-1">
                       <button
@@ -413,7 +414,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 font-bold text-slate-800">
-                      ${prt?.marketPrice ? (prt.marketPrice * item.quantity).toFixed(2) : '0.00'}
+                      {formatZarFromUsd((prt?.marketPrice || 0) * item.quantity)}
                     </td>
 
                     <td className="py-3.5 px-4 text-right">

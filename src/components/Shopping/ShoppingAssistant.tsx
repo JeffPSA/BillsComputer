@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   ShoppingBag,
   Search,
-  DollarSign,
   Download,
   Copy,
   Check,
@@ -14,6 +13,7 @@ import {
 import { fetchShoppingOptimization, searchMarketplace } from '../../services/api';
 import { ShoppingOptimizationResult, MarketplaceListing } from '../../types/tcg';
 import { CardDetailModal } from '../CardDetailModal';
+import { formatZarFromUsd, usdToZar } from '../../utils/currency';
 
 interface ShoppingAssistantProps {
   allCards?: any[];
@@ -76,14 +76,14 @@ export const ShoppingAssistant: React.FC<ShoppingAssistantProps> = ({ allCards =
 
   const handleExportCSV = () => {
     if (!optResult) return;
-    const headers = ['Card Name', 'Printing', 'Required Quantity', 'Seller', 'Item Price', 'Shipping Price'];
+    const headers = ['Card Name', 'Printing', 'Required Quantity', 'Seller', 'Item Price (ZAR)', 'Shipping Price (ZAR)'];
     const rows = optResult.items.map((i) => [
       `"${i.cardName}"`,
       `"${i.printingString}"`,
       i.requiredQty,
       `"${i.listing.sellerName}"`,
-      i.listing.itemPrice,
-      i.listing.shippingPrice,
+      usdToZar(i.listing.itemPrice).toFixed(2),
+      usdToZar(i.listing.shippingPrice).toFixed(2),
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -161,13 +161,13 @@ export const ShoppingAssistant: React.FC<ShoppingAssistantProps> = ({ allCards =
         {optResult && (
           <div className="flex items-center space-x-4 text-xs font-bold text-slate-700">
             <div>
-              Cards: <span className="text-slate-900 font-black">${optResult.totalCardCost.toFixed(2)}</span>
+              Cards: <span className="text-slate-900 font-black">{formatZarFromUsd(optResult.totalCardCost)}</span>
             </div>
             <div>
-              Shipping: <span className="text-amber-600 font-black">${optResult.totalShippingCost.toFixed(2)}</span>
+              Shipping: <span className="text-amber-600 font-black">{formatZarFromUsd(optResult.totalShippingCost)}</span>
             </div>
             <div className="text-emerald-800 font-black text-sm bg-emerald-100 px-3 py-1.5 rounded-xl border border-emerald-300">
-              Total: ${optResult.grandTotal.toFixed(2)}
+              Total: {formatZarFromUsd(optResult.grandTotal)}
             </div>
           </div>
         )}
@@ -208,9 +208,9 @@ export const ShoppingAssistant: React.FC<ShoppingAssistantProps> = ({ allCards =
 
                 <div className="flex items-center space-x-4 text-right">
                   <div className="text-xs">
-                    <div className="text-slate-900 font-black">${(item.listing.itemPrice * item.requiredQty).toFixed(2)}</div>
+                    <div className="text-slate-900 font-black">{formatZarFromUsd(item.listing.itemPrice * item.requiredQty)}</div>
                     <div className="text-slate-400 text-[10px] font-bold">
-                      + ${item.listing.shippingPrice.toFixed(2)} ship
+                      + {formatZarFromUsd(item.listing.shippingPrice)} ship
                     </div>
                   </div>
 
@@ -275,7 +275,7 @@ export const ShoppingAssistant: React.FC<ShoppingAssistantProps> = ({ allCards =
                 </div>
 
                 <div className="flex items-center space-x-3">
-                  <div className="text-emerald-700 font-black">${listing.itemPrice.toFixed(2)}</div>
+                  <div className="text-emerald-700 font-black">{formatZarFromUsd(listing.itemPrice)}</div>
                   <a
                     href={listing.listingUrl}
                     target="_blank"

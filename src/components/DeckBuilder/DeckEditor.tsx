@@ -23,6 +23,7 @@ import { searchCardsApi } from '../../services/api';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
 import { DeckSettingsModal } from './DeckSettingsModal';
 import { CardDetailModal } from '../CardDetailModal';
+import { formatZarFromUsd } from '../../utils/currency';
 
 interface DeckEditorProps {
   deck: any;
@@ -246,7 +247,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
                     </div>
                     {defaultPrt && (
                       <div className="text-[10px] text-indigo-700 font-bold truncate">
-                        {defaultPrt.setCode} #{defaultPrt.cardNumber} • ${defaultPrt.marketPrice ? defaultPrt.marketPrice.toFixed(2) : '0.50'}
+                        {defaultPrt.setCode} #{defaultPrt.cardNumber} • {formatZarFromUsd(defaultPrt.marketPrice || 0.5)}
                       </div>
                     )}
                   </div>
@@ -570,7 +571,7 @@ const PrintingSelectorModal: React.FC<{
                 </div>
               </div>
               <span className="text-xs font-bold text-emerald-700">
-                ${prt.marketPrice?.toFixed(2)}
+                {formatZarFromUsd(prt.marketPrice || 0)}
               </span>
             </div>
           ))}

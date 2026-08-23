@@ -23,8 +23,10 @@ import {
   updateCollectionItem,
   createCustomCard,
   checkAuth,
-  logout
+  logout,
+  fetchCurrencySettings
 } from './services/api';
+import { setUsdToZarRate } from './utils/currency';
 
 type Theme = 'light' | 'dark';
 
@@ -55,6 +57,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [, setCurrencyRateVersion] = useState(0);
 
   // Modals
   const [showImportModal, setShowImportModal] = useState(false);
@@ -98,10 +101,15 @@ export default function App() {
 
   const refreshAllData = async () => {
     try {
-      const [dList, cList] = await Promise.all([
+      const [dList, cList, currencySettings] = await Promise.all([
         fetchDecks(),
         fetchCollection(),
+        fetchCurrencySettings().catch(() => null),
       ]);
+      if (currencySettings?.usdToZarRate) {
+        setUsdToZarRate(Number(currencySettings.usdToZarRate));
+        setCurrencyRateVersion((version) => version + 1);
+      }
       setDecks(dList || []);
       setCollection(cList || []);
       setLoading(false);

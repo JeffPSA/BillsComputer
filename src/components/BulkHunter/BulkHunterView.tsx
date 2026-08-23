@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { fetchBulkHuntChecklist, recordAcquisition, fetchStoreProfiles } from '../../services/api';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
+import { usdToZar } from '../../utils/currency';
 
 import { StoreProfileModal } from './StoreProfileModal';
 import { CardDetailModal } from '../CardDetailModal';
@@ -110,7 +111,7 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
             quantity: found,
             source: checklistData.storeProfile?.name || 'Local Game Store',
             method: 'Bulk',
-            costPerUnit: 0.25,
+            costPerUnit: Number(usdToZar(0.25).toFixed(2)),
             deckIdToAllocate: selectedDeckId !== 'ALL' ? selectedDeckId : undefined,
           });
           totalAcquiredCount += found;

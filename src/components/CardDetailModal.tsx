@@ -1,7 +1,8 @@
 import React from 'react';
-import { X, Tag, ShieldAlert, Sparkles, ExternalLink, DollarSign } from 'lucide-react';
+import { X, Tag, ShieldAlert, Sparkles, ExternalLink, CircleDollarSign } from 'lucide-react';
 import { LogicalCard, CardPrinting } from '../types/tcg';
 import { getImageUrl, handleImageError } from '../utils/imageUtils';
+import { formatZarFromUsd } from '../utils/currency';
 
 interface CardDetailModalProps {
   card: LogicalCard;
@@ -72,8 +73,8 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                   {currentPrinting.setName} ({currentPrinting.setCode} #{currentPrinting.cardNumber})
                 </div>
                 <div className="text-sm font-black text-amber-400 flex items-center justify-center space-x-1">
-                  <DollarSign className="w-4 h-4 stroke-[2.5]" />
-                  <span>Est. Market: ${(currentPrinting.marketPrice || 1.0).toFixed(2)}</span>
+                  <CircleDollarSign className="w-4 h-4 stroke-[2.5]" />
+                  <span>Est. Market: {formatZarFromUsd(currentPrinting.marketPrice || 1.0)}</span>
                 </div>
               </div>
             )}
@@ -141,7 +142,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                         </div>
 
                         <div className="text-right">
-                          <div className="font-black text-slate-900">${(prt.marketPrice || 1.0).toFixed(2)}</div>
+                          <div className="font-black text-slate-900">{formatZarFromUsd(prt.marketPrice || 1.0)}</div>
                           {onSelectPrinting && isSelected && (
                             <span className="text-[10px] text-indigo-700 font-black uppercase">Active ✓</span>
                           )}

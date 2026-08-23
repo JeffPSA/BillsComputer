@@ -47,6 +47,7 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SQLITE_DB_FILE = path.join(DATA_DIR, 'cards.db');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const DEFAULT_USD_TO_ZAR_RATE = 18.5;
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -181,6 +182,18 @@ function writeDb(db: DatabaseSchema) {
   dbManager.writeDb(db);
 }
 
+function getCurrencySettings() {
+  const metadata = dbManager.getSyncMetadata();
+  const savedRate = Number(metadata.usdToZarRate);
+  const usdToZarRate = Number.isFinite(savedRate) && savedRate > 0 ? savedRate : DEFAULT_USD_TO_ZAR_RATE;
+
+  return {
+    usdToZarRate,
+    source: metadata.usdToZarRateUpdatedAt ? 'admin' : 'default',
+    updatedAt: metadata.usdToZarRateUpdatedAt || null,
+  };
+}
+
 function getAdminHealth() {
   const db = readDb();
   const stats = dbManager.getStats();
@@ -196,6 +209,7 @@ function getAdminHealth() {
       totalAcquisitions: db.acquisitions.length,
       totalStoreProfiles: db.storeProfiles.length,
     },
+    currency: getCurrencySettings(),
     syncMetadata,
     allocationIntegrity,
     syncJob: adminSyncJob,
@@ -367,6 +381,37 @@ async function startServer() {
     } catch (err: any) {
       console.error('[Admin] Error reading admin health:', err);
       res.status(500).json({ error: 'Unable to read admin health' });
+    }
+  });
+
+  // GET /api/admin/settings/currency (Protected currency display settings)
+  app.get('/api/admin/settings/currency', requireAuth, (_req, res) => {
+    try {
+      res.json(getCurrencySettings());
+    } catch (err: any) {
+      console.error('[Admin] Error reading currency settings:', err);
+      res.status(500).json({ error: 'Unable to read currency settings' });
+    }
+  });
+
+  // POST /api/admin/settings/currency (Protected currency display settings update)
+  app.post('/api/admin/settings/currency', requireAuth, (req, res) => {
+    try {
+      const usdToZarRate = Number(req.body?.usdToZarRate);
+      if (!Number.isFinite(usdToZarRate) || usdToZarRate <= 0 || usdToZarRate > 1000) {
+        return res.status(400).json({ error: 'Enter a valid USD to ZAR rate greater than 0.' });
+      }
+
+      const roundedRate = Number(usdToZarRate.toFixed(4));
+      dbManager.setSyncMetadataValue('usdToZarRate', roundedRate);
+      dbManager.setSyncMetadataValue('usdToZarRateUpdatedAt', new Date().toISOString());
+      res.json({
+        success: true,
+        ...getCurrencySettings(),
+      });
+    } catch (err: any) {
+      console.error('[Admin] Error saving currency settings:', err);
+      res.status(500).json({ error: 'Unable to save currency settings' });
     }
   });
 
@@ -1404,7 +1449,7 @@ async function startServer() {
     const card = dbManager.getCardById(cardId);
     const prtId = printingId || card?.defaultPrintingId || '';
     const qty = Number(quantity || 1);
-    const unitCost = Number(costPerUnit || 0.25);
+    const unitCost = Number(costPerUnit || 0);
 
     // Record Acquisition Log
     const acq = {

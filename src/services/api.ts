@@ -343,6 +343,22 @@ export async function fetchAdminHealth(): Promise<any> {
   return await res.json();
 }
 
+export async function fetchCurrencySettings(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/settings/currency`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function updateCurrencySettings(usdToZarRate: number): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/settings/currency`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ usdToZarRate }),
+  });
+  return await res.json();
+}
+
 export async function startAdminSync(
   mode: 'incremental' | 'force' | 'sets-only' | 'single-set',
   options?: { setCode?: string }

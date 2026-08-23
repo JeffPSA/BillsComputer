@@ -1387,6 +1387,14 @@ export class DatabaseManager {
     return metadata;
   }
 
+  setSyncMetadataValue(key: string, value: unknown): void {
+    this.db.prepare(`
+      INSERT INTO sync_metadata (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, JSON.stringify(value));
+  }
+
   /**
    * Get database statistics
    */
