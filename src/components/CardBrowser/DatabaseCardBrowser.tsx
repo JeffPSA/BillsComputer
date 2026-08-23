@@ -21,13 +21,15 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
   const [supertype, setSupertype] = useState('ALL');
   const [setCode, setSetCode] = useState('ALL');
   const [rarity, setRarity] = useState('ALL');
+  const [variant, setVariant] = useState('ALL');
   const [ownership, setOwnership] = useState('ALL');
   const [wishlist, setWishlist] = useState('ALL');
   const [page, setPage] = useState(1);
   const [cards, setCards] = useState<any[]>([]);
   const [sets, setSets] = useState<any[]>([]);
   const [rarities, setRarities] = useState<string[]>([]);
-  const [ownershipByCardId, setOwnershipByCardId] = useState<Record<string, { ownedQuantity: number; wishlistQuantity: number }>>({});
+  const [variants, setVariants] = useState<string[]>([]);
+  const [ownershipByPrintingId, setOwnershipByPrintingId] = useState<Record<string, { ownedQuantity: number; wishlistQuantity: number }>>({});
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
 
   useEffect(() => {
     setPage(1);
-  }, [query, supertype, setCode, rarity, ownership, wishlist]);
+  }, [query, supertype, setCode, rarity, variant, ownership, wishlist]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +52,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
           supertype,
           setCode,
           rarity,
+          variant,
           ownership,
           wishlist,
           page,
@@ -61,7 +64,8 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
         setTotalCount(result.totalCount || 0);
         setSets(result.sets || []);
         setRarities(result.rarities || []);
-        setOwnershipByCardId(result.ownershipByCardId || {});
+        setVariants(result.variants || []);
+        setOwnershipByPrintingId(result.ownershipByPrintingId || {});
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -71,7 +75,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, supertype, setCode, rarity, ownership, wishlist, page]);
+  }, [query, supertype, setCode, rarity, variant, ownership, wishlist, page]);
 
   const visibleRange = useMemo(() => {
     if (totalCount === 0) return '0';
@@ -95,11 +99,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
       return;
     }
 
-    setOwnershipByCardId((current) => ({
+    const ownershipKey = printing?.id || card.defaultPrintingId;
+    setOwnershipByPrintingId((current) => ({
       ...current,
-      [card.id]: {
-        ownedQuantity: (current[card.id]?.ownedQuantity || 0) + 1,
-        wishlistQuantity: current[card.id]?.wishlistQuantity || 0,
+      [ownershipKey]: {
+        ownedQuantity: (current[ownershipKey]?.ownedQuantity || 0) + 1,
+        wishlistQuantity: current[ownershipKey]?.wishlistQuantity || 0,
       },
     }));
     setActionMessage(`Added 1x ${card.name} to collection`);
@@ -119,11 +124,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
       return;
     }
 
-    setOwnershipByCardId((current) => ({
+    const ownershipKey = printing?.id || card.defaultPrintingId;
+    setOwnershipByPrintingId((current) => ({
       ...current,
-      [card.id]: {
-        ownedQuantity: current[card.id]?.ownedQuantity || 0,
-        wishlistQuantity: (current[card.id]?.wishlistQuantity || 0) + 1,
+      [ownershipKey]: {
+        ownedQuantity: current[ownershipKey]?.ownedQuantity || 0,
+        wishlistQuantity: (current[ownershipKey]?.wishlistQuantity || 0) + 1,
       },
     }));
     setActionMessage(`Added ${card.name} to wishlist`);
@@ -138,12 +144,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
             <span>Database Card Browser</span>
           </h1>
           <p className="text-xs text-indigo-100 font-medium pt-0.5">
-            Browse local SQLite cards, add physical copies, and build wishlist targets.
+            Browse exact local SQLite printings, add physical copies, and build wishlist targets.
           </p>
         </div>
 
         <div className="text-xs font-black bg-indigo-900/50 border border-indigo-500 rounded-2xl px-4 py-2">
-          {visibleRange} of {totalCount.toLocaleString()} cards
+          {visibleRange} of {totalCount.toLocaleString()} printings
         </div>
       </div>
 
@@ -164,12 +170,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, set, card number, rarity..."
+            placeholder="Search name, set, card number, rarity, variant..."
             className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 transition font-medium"
           />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
           <select value={supertype} onChange={(e) => setSupertype(e.target.value)} className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-2xl px-3 py-2.5 focus:outline-none">
             <option value="ALL">All Types</option>
             <option value="Pokémon">Pokémon</option>
@@ -190,6 +196,13 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
             <option value="ALL">All Rarities</option>
             {rarities.map((r) => (
               <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+
+          <select value={variant} onChange={(e) => setVariant(e.target.value)} className="bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-2xl px-3 py-2.5 focus:outline-none">
+            <option value="ALL">All Variants</option>
+            {variants.map((v) => (
+              <option key={v} value={v}>{v}</option>
             ))}
           </select>
 
@@ -230,11 +243,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
         {cards.map((card) => {
           const printing = card.printings?.[0];
-          const owned = ownershipByCardId[card.id]?.ownedQuantity || 0;
-          const wishlisted = ownershipByCardId[card.id]?.wishlistQuantity || 0;
+          const ownershipKey = printing?.id || card.defaultPrintingId;
+          const owned = ownershipByPrintingId[ownershipKey]?.ownedQuantity || 0;
+          const wishlisted = ownershipByPrintingId[ownershipKey]?.wishlistQuantity || 0;
 
           return (
-            <div key={card.id} className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:border-indigo-300 transition">
+            <div key={ownershipKey} className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:border-indigo-300 transition">
               <button
                 onClick={() => setViewingCardModal({ card, printing })}
                 className="block w-full bg-slate-100"
@@ -259,6 +273,9 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
                   </button>
                   <div className="text-[10px] text-indigo-700 font-bold">
                     {printing ? `${printing.setCode} #${printing.cardNumber} - ${printing.rarity}` : 'No printing data'}
+                  </div>
+                  <div className="text-[10px] text-amber-700 font-black uppercase">
+                    {printing?.variant || 'Normal'}
                   </div>
                   <div className="text-[10px] text-slate-500 font-bold">
                     {card.supertype} {card.subtype ? `- ${card.subtype}` : ''}

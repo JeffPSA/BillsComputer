@@ -158,6 +158,7 @@ export async function browseDatabaseCards(options: {
   supertype?: string;
   setCode?: string;
   rarity?: string;
+  variant?: string;
   ownership?: string;
   wishlist?: string;
   page?: number;

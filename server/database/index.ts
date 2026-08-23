@@ -153,6 +153,7 @@ interface CardBrowserOptions {
   supertype?: string;
   setCode?: string;
   rarity?: string;
+  variant?: string;
   ownership?: 'ALL' | 'OWNED' | 'MISSING';
   wishlist?: 'ALL' | 'WISHLIST' | 'NOT_WISHLIST';
   page?: number;
@@ -921,7 +922,8 @@ export class DatabaseManager {
     pageSize: number;
     sets: CardSet[];
     rarities: string[];
-    ownershipByCardId: Record<string, { ownedQuantity: number; wishlistQuantity: number }>;
+    variants: string[];
+    ownershipByPrintingId: Record<string, { ownedQuantity: number; wishlistQuantity: number }>;
   } {
     const page = Math.max(1, Number(options.page || 1));
     const pageSize = Math.max(1, Math.min(100, Number(options.pageSize || 30)));
@@ -947,16 +949,21 @@ export class DatabaseManager {
       params.push(options.rarity);
     }
 
+    if (options.variant && options.variant !== 'ALL') {
+      where.push('p.variant = ?');
+      params.push(options.variant);
+    }
+
     if (options.ownership === 'OWNED') {
-      where.push('EXISTS (SELECT 1 FROM collection_items ci WHERE ci.cardId = c.id AND ci.quantity > 0)');
+      where.push('EXISTS (SELECT 1 FROM collection_items ci WHERE ci.printingId = p.id AND ci.quantity > 0)');
     } else if (options.ownership === 'MISSING') {
-      where.push('NOT EXISTS (SELECT 1 FROM collection_items ci WHERE ci.cardId = c.id AND ci.quantity > 0)');
+      where.push('NOT EXISTS (SELECT 1 FROM collection_items ci WHERE ci.printingId = p.id AND ci.quantity > 0)');
     }
 
     if (options.wishlist === 'WISHLIST') {
-      where.push('EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.cardId = c.id)');
+      where.push('EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.printingId = p.id)');
     } else if (options.wishlist === 'NOT_WISHLIST') {
-      where.push('NOT EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.cardId = c.id)');
+      where.push('NOT EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.printingId = p.id)');
     }
 
     for (const token of tokens) {
@@ -970,15 +977,16 @@ export class DatabaseManager {
           OR LOWER(p.setName) LIKE ?
           OR LOWER(REPLACE(p.cardNumber, '#', '')) = ?
           OR LOWER(p.rarity) LIKE ?
+          OR LOWER(p.variant) LIKE ?
         )
       `);
-      params.push(likeToken, likeToken, likeToken, likeToken, likeToken, token, likeToken);
+      params.push(likeToken, likeToken, likeToken, likeToken, likeToken, token, likeToken, likeToken);
     }
 
     const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-    const fromSql = 'FROM cards c LEFT JOIN printings p ON p.cardId = c.id';
+    const fromSql = 'FROM printings p JOIN cards c ON c.id = p.cardId';
     const totalRow = this.db
-      .prepare(`SELECT COUNT(DISTINCT c.id) as count ${fromSql} ${whereSql}`)
+      .prepare(`SELECT COUNT(p.id) as count ${fromSql} ${whereSql}`)
       .get(...params) as { count: number };
     const orderParams: unknown[] = [];
     const orderSql = tokens.length > 0
@@ -989,77 +997,91 @@ export class DatabaseManager {
             WHEN ${normalizedCardNameSql} LIKE ? THEN 1
             ELSE 2
           END,
-          c.name COLLATE NOCASE
+          c.name COLLATE NOCASE,
+          p.setName COLLATE NOCASE,
+          p.cardNumber COLLATE NOCASE,
+          p.variant COLLATE NOCASE
       `
-      : 'ORDER BY c.name COLLATE NOCASE';
+      : 'ORDER BY c.name COLLATE NOCASE, p.setName COLLATE NOCASE, p.cardNumber COLLATE NOCASE, p.variant COLLATE NOCASE';
 
     if (tokens.length > 0) {
       orderParams.push(normalizedQuery, `${normalizedQuery}%`);
     }
 
-    const idRows = this.db
+    const printingRows = this.db
       .prepare(`
-        SELECT DISTINCT c.id, c.name
+        SELECT p.id
         ${fromSql}
         ${whereSql}
         ${orderSql}
         LIMIT ? OFFSET ?
       `)
       .all(...params, ...orderParams, pageSize, offset) as { id: string }[];
-    const cardIds = idRows.map((row) => row.id);
+    const printingIds = printingRows.map((row) => row.id);
     const sets = this.db.prepare('SELECT * FROM sets ORDER BY releaseDate DESC, name COLLATE NOCASE').all() as CardSet[];
     const rarities = (
       this.db.prepare('SELECT DISTINCT rarity FROM printings WHERE rarity IS NOT NULL AND rarity != ? ORDER BY rarity COLLATE NOCASE').all('') as { rarity: string }[]
     ).map((row) => row.rarity);
+    const variants = (
+      this.db.prepare('SELECT DISTINCT variant FROM printings WHERE variant IS NOT NULL AND variant != ? ORDER BY variant COLLATE NOCASE').all('') as { variant: string }[]
+    ).map((row) => row.variant);
 
-    if (cardIds.length === 0) {
-      return { cards: [], totalCount: totalRow.count, page, pageSize, sets, rarities, ownershipByCardId: {} };
+    if (printingIds.length === 0) {
+      return { cards: [], totalCount: totalRow.count, page, pageSize, sets, rarities, variants, ownershipByPrintingId: {} };
     }
 
-    const placeholders = cardIds.map(() => '?').join(', ');
-    const cardRows = this.db.prepare(`SELECT * FROM cards WHERE id IN (${placeholders})`).all(...cardIds) as any[];
+    const placeholders = printingIds.map(() => '?').join(', ');
     const printings = (
       this.db
-        .prepare(`SELECT * FROM printings WHERE cardId IN (${placeholders}) ORDER BY setName COLLATE NOCASE, cardNumber`)
-        .all(...cardIds) as any[]
+        .prepare(`SELECT * FROM printings WHERE id IN (${placeholders})`)
+        .all(...printingIds) as any[]
     ).map((row) => this.parsePrintingRow(row));
+    const cardIds = [...new Set(printings.map((printing) => printing.cardId))];
+    const cardPlaceholders = cardIds.map(() => '?').join(', ');
+    const cardRows = this.db.prepare(`SELECT * FROM cards WHERE id IN (${cardPlaceholders})`).all(...cardIds) as any[];
     const ownedRows = this.db
-      .prepare(`SELECT cardId, SUM(quantity) as quantity FROM collection_items WHERE cardId IN (${placeholders}) GROUP BY cardId`)
-      .all(...cardIds) as { cardId: string; quantity: number }[];
+      .prepare(`SELECT printingId, SUM(quantity) as quantity FROM collection_items WHERE printingId IN (${placeholders}) GROUP BY printingId`)
+      .all(...printingIds) as { printingId: string; quantity: number }[];
     const wishlistRows = this.db
-      .prepare(`SELECT cardId, SUM(quantity) as quantity FROM wishlist_items WHERE cardId IN (${placeholders}) GROUP BY cardId`)
-      .all(...cardIds) as { cardId: string; quantity: number }[];
-    const ownershipByCardId: Record<string, { ownedQuantity: number; wishlistQuantity: number }> = {};
+      .prepare(`SELECT printingId, SUM(quantity) as quantity FROM wishlist_items WHERE printingId IN (${placeholders}) GROUP BY printingId`)
+      .all(...printingIds) as { printingId: string; quantity: number }[];
+    const ownershipByPrintingId: Record<string, { ownedQuantity: number; wishlistQuantity: number }> = {};
 
-    for (const cardId of cardIds) {
-      ownershipByCardId[cardId] = { ownedQuantity: 0, wishlistQuantity: 0 };
+    for (const printingId of printingIds) {
+      ownershipByPrintingId[printingId] = { ownedQuantity: 0, wishlistQuantity: 0 };
     }
     for (const row of ownedRows) {
-      ownershipByCardId[row.cardId] = {
-        ...(ownershipByCardId[row.cardId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
+      ownershipByPrintingId[row.printingId] = {
+        ...(ownershipByPrintingId[row.printingId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
         ownedQuantity: Number(row.quantity || 0),
       };
     }
     for (const row of wishlistRows) {
-      ownershipByCardId[row.cardId] = {
-        ...(ownershipByCardId[row.cardId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
+      ownershipByPrintingId[row.printingId] = {
+        ...(ownershipByPrintingId[row.printingId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
         wishlistQuantity: Number(row.quantity || 0),
       };
     }
 
     const cardById = new Map(cardRows.map((row) => [row.id, this.parseCardRow(row)]));
-    const orderedCards = cardIds
-      .map((id) => cardById.get(id))
-      .filter((card): card is LogicalCard => Boolean(card));
+    const printingById = new Map(printings.map((printing) => [printing.id, printing]));
+    const orderedCards: LogicalCard[] = printingIds
+      .map((printingId) => {
+        const printing = printingById.get(printingId);
+        const card = printing ? cardById.get(printing.cardId) : undefined;
+        return card && printing ? { ...card, printings: [printing] } : null;
+      })
+      .filter((card): card is LogicalCard & { printings: CardPrinting[] } => Boolean(card));
 
     return {
-      cards: this.attachPrintings(orderedCards, printings),
+      cards: orderedCards,
       totalCount: totalRow.count,
       page,
       pageSize,
       sets,
       rarities,
-      ownershipByCardId,
+      variants,
+      ownershipByPrintingId,
     };
   }
 

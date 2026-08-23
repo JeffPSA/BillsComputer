@@ -176,12 +176,14 @@ Goal: add a database browser section for browsing every local card/printing in S
 
 Notes:
 
-- Done: add Browser navigation section for local SQLite catalogue browsing.
-- Done: make it useful for master set collecting: filter by set, card type, rarity, owned/missing state, and wishlist state.
+- Done: add Browser navigation section for exact local SQLite printing/variant browsing.
+- Done: make it useful for master set collecting: filter by set, card type, rarity, variant, owned/missing state, and wishlist state.
 - Done: add direct actions from the browser to add one copy to Collection.
 - Done: add direct actions from the browser to add one copy to Wishlist.
 - Done: make Wishlist persistent in SQLite so browser-added targets appear on the Wishlist page.
 - Done: keep it SQLite-first and paginated so it does not slow the hosted server down.
+- Done: Browser now paginates exact stored printings instead of grouping all variants under one logical card.
+- Later: split Pokemon TCG API price finishes such as Normal, Holo, and Reverse Holo into separate SQLite printing rows during sync, so variants that share one API card ID can be collected separately.
 - Later: add master-set completion progress by set if/when needed.
 
 ## Later: Home Dashboard Routine API

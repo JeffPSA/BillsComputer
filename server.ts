@@ -513,6 +513,7 @@ async function startServer() {
         supertype: req.query.supertype as string,
         setCode: req.query.setCode as string,
         rarity: req.query.rarity as string,
+        variant: req.query.variant as string,
         ownership: req.query.ownership as any,
         wishlist: req.query.wishlist as any,
         page: Number(req.query.page || 1),
