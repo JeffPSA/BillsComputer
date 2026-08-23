@@ -9,6 +9,7 @@ import { AssembleDeckView } from './components/AssembleDeck/AssembleDeckView';
 import { BulkHunterView } from './components/BulkHunter/BulkHunterView';
 import { ShoppingAssistant } from './components/Shopping/ShoppingAssistant';
 import { WishlistManager } from './components/Wishlist/WishlistManager';
+import { AdminPortal } from './components/Admin/AdminPortal';
 import { ImportLimitlessModal } from './components/ImportLimitlessModal';
 import { QuickAddCollectionModal } from './components/QuickAddCollectionModal';
 import { LoginModal } from './components/LoginModal';
@@ -25,14 +26,32 @@ import {
   logout
 } from './services/api';
 
+type Theme = 'light' | 'dark';
+
+const getInitialTheme = (): Theme => {
+  if (typeof window === 'undefined') {
+    return 'light';
+  }
+
+  const savedTheme = window.localStorage.getItem('theme');
+  if (savedTheme === 'light' || savedTheme === 'dark') {
+    return savedTheme;
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedDeckId, setSelectedDeckId] = useState<string | null>(null);
   const [bulkHunterDeckId, setBulkHunterDeckId] = useState<string>('ALL');
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   const [decks, setDecks] = useState<any[]>([]);
   const [collection, setCollection] = useState<any[]>([]);
   const [allCards, setAllCards] = useState<any[]>([]);
+  const [allCardsLoaded, setAllCardsLoaded] = useState(false);
+  const [allCardsLoading, setAllCardsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -41,6 +60,11 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showQuickAddModal, setShowQuickAddModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('theme', theme);
+  }, [theme]);
 
   // Check auth on mount
   useEffect(() => {
@@ -67,26 +91,41 @@ export default function App() {
     setDecks([]);
     setCollection([]);
     setAllCards([]);
+    setAllCardsLoaded(false);
+    setAllCardsLoading(false);
     setLoading(false);
   };
 
   const refreshAllData = async () => {
     try {
-      const [dList, cList, cardList] = await Promise.all([
+      const [dList, cList] = await Promise.all([
         fetchDecks(),
         fetchCollection(),
-        fetchCards(),
       ]);
       setDecks(dList || []);
       setCollection(cList || []);
-      setAllCards(cardList || []);
       setLoading(false);
     } catch (err) {
       console.error('Error refreshing app data:', err);
       setDecks([]);
       setCollection([]);
-      setAllCards([]);
       setLoading(false);
+    }
+  };
+
+  const loadAllCardsData = async () => {
+    if (allCardsLoaded || allCardsLoading) return;
+
+    setAllCardsLoading(true);
+    try {
+      const cardList = await fetchCards();
+      setAllCards(cardList || []);
+      setAllCardsLoaded(true);
+    } catch (err) {
+      console.error('Error loading card catalog:', err);
+      setAllCards([]);
+    } finally {
+      setAllCardsLoading(false);
     }
   };
 
@@ -95,6 +134,13 @@ export default function App() {
       refreshAllData();
     }
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (activeTab === 'bulk-hunter' || activeTab === 'shopping' || activeTab === 'wishlist') {
+      loadAllCardsData();
+    }
+  }, [activeTab, isAuthenticated]);
 
   // Handlers
   const handleAutoAllocate = async (deckId: string) => {
@@ -241,7 +287,7 @@ export default function App() {
   const activeSelectedDeck = decks.find((d) => d.id === selectedDeckId);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased selection:bg-yellow-400 selection:text-indigo-950">
+    <div className={`min-h-screen bg-slate-50 text-slate-900 font-sans antialiased selection:bg-yellow-400 selection:text-indigo-950 ${theme === 'dark' ? 'dark-theme' : ''}`}>
       {authLoading ? (
         <div className="flex items-center justify-center min-h-screen">
           <div className="text-indigo-700 font-bold">Loading...</div>
@@ -260,6 +306,8 @@ export default function App() {
             onOpenQuickAddCollection={() => setShowQuickAddModal(true)}
             onLogout={handleLogout}
             isAuthenticated={isAuthenticated}
+            theme={theme}
+            onToggleTheme={() => setTheme((currentTheme) => (currentTheme === 'dark' ? 'light' : 'dark'))}
           />
 
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -276,6 +324,10 @@ export default function App() {
                     decks={decks}
                     collection={collection}
                     setActiveTab={setActiveTab}
+                    onSelectDeck={(deckId) => {
+                      setSelectedDeckId(deckId);
+                      setActiveTab('decks');
+                    }}
                     onOpenImportModal={() => setShowImportModal(true)}
                     onOpenQuickAddCollection={() => setShowQuickAddModal(true)}
                   />
@@ -292,10 +344,6 @@ export default function App() {
                     onAutoAllocate={handleAutoAllocate}
                     onOpenImportModal={() => setShowImportModal(true)}
                     onDeckDeleted={refreshAllData}
-                    onAssembleDeck={(deckId) => {
-                      setSelectedDeckId(deckId);
-                      setActiveTab('assemble');
-                    }}
                     onHuntMissingCards={(deckId) => {
                       setBulkHunterDeckId(deckId);
                       setActiveTab('bulk-hunter');
@@ -310,10 +358,6 @@ export default function App() {
                     onAddCardToDeck={handleAddCardToDeck}
                     onRemoveRequirement={handleRemoveRequirement}
                     onAutoAllocate={handleAutoAllocate}
-                    onAssembleDeck={(deckId) => {
-                      setSelectedDeckId(deckId);
-                      setActiveTab('assemble');
-                    }}
                     onHuntMissingCards={(deckId) => {
                       setBulkHunterDeckId(deckId);
                       setActiveTab('bulk-hunter');
@@ -359,7 +403,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'shopping' && <ShoppingAssistant />}
+            {activeTab === 'shopping' && <ShoppingAssistant allCards={allCards} />}
 
             {activeTab === 'wishlist' && (
               <WishlistManager
@@ -368,6 +412,8 @@ export default function App() {
                 onNavigateToShopping={() => setActiveTab('shopping')}
               />
             )}
+
+            {activeTab === 'admin' && <AdminPortal />}
               </>
             )}
           </main>

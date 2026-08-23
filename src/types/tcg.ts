@@ -252,7 +252,7 @@ export interface CalculatedCardOwnership {
 
 export interface MarketplaceListing {
   id: string;
-  marketplace: 'TCGPlayer' | 'eBay' | "BOB's Shop" | 'PokeBulk' | 'Local Game Store';
+  marketplace: 'TCGPlayer' | 'eBay' | 'Pokeverse' | 'PokeBulk' | 'Bob Shop' | 'Local Game Store';
   cardName: string;
   printingString: string;
   sellerName: string;

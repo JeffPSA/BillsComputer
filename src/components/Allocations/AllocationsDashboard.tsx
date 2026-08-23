@@ -320,7 +320,7 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
                         <button
                           type="button"
                           onClick={() => handleRelease(a.allocationId)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 font-bold hover:bg-rose-200"
+                          className="allocation-danger-action inline-flex items-center gap-1 px-2 py-0.5 rounded-lg font-black transition"
                           title="Release all copies of this allocation"
                         >
                           <MinusCircle className="w-3 h-3" />
@@ -380,7 +380,7 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
                     onClick={() => onToggleDeckStatus(deck.id, isActive ? 'Inactive' : 'Active')}
                     className={`inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition ${
                       isActive
-                        ? 'bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200'
+                        ? 'allocation-danger-action'
                         : 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
                     }`}
                   >

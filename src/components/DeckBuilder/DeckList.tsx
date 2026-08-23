@@ -4,7 +4,6 @@ import {
   Plus,
   Trash2,
   Share2,
-  PackageCheck,
   CheckCircle2,
   AlertTriangle,
   FileText,
@@ -23,7 +22,6 @@ interface DeckListProps {
   onDeleteDeck: (deckId: string) => Promise<void>;
   onAutoAllocate: (deckId: string) => void;
   onOpenImportModal: () => void;
-  onAssembleDeck: (deckId: string) => void;
   onHuntMissingCards?: (deckId: string) => void;
   onDeckDeleted?: () => void;
 }
@@ -35,7 +33,6 @@ export const DeckList: React.FC<DeckListProps> = ({
   onDeleteDeck,
   onAutoAllocate,
   onOpenImportModal,
-  onAssembleDeck,
   onHuntMissingCards,
   onDeckDeleted,
 }) => {
@@ -96,7 +93,10 @@ export const DeckList: React.FC<DeckListProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {decks.map((deck) => {
           const reqs = deck.requirements || [];
-          const missingReqs = reqs.filter((r: any) => r.ownership?.status !== 'FULLY_OWNED');
+          const allocationMissingCards =
+            deck.totalAllocationMissingCards ?? Math.max(0, (deck.totalRequiredCards || 0) - (deck.totalAllocatedCards || 0));
+          const collectionMissingCards =
+            deck.totalCollectionMissingCards ?? reqs.reduce((sum: number, r: any) => sum + (r.ownership?.missing || 0), 0);
 
           return (
             <div
@@ -137,7 +137,7 @@ export const DeckList: React.FC<DeckListProps> = ({
                   ) : (
                     <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-xl">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-                      <span>⚠️ Needs {missingReqs.length} Physical Cards</span>
+                      <span>⚠️ {allocationMissingCards} Cards Not Allocated</span>
                     </div>
                   )}
                 </div>
@@ -243,7 +243,7 @@ export const DeckList: React.FC<DeckListProps> = ({
                 </div>
 
                 <div className="flex items-center space-x-1.5">
-                  {missingReqs.length > 0 && onHuntMissingCards && (
+                  {collectionMissingCards > 0 && onHuntMissingCards && (
                     <button
                       onClick={() => onHuntMissingCards(deck.id)}
                       className="inline-flex items-center space-x-1 px-3 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 text-xs font-black uppercase tracking-wider rounded-xl transition shadow-xs"
@@ -254,13 +254,6 @@ export const DeckList: React.FC<DeckListProps> = ({
                     </button>
                   )}
 
-                  <button
-                    onClick={() => onAssembleDeck(deck.id)}
-                    className="inline-flex items-center space-x-1 px-3.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-sm"
-                  >
-                    <PackageCheck className="w-3.5 h-3.5 stroke-[2.5]" />
-                    <span>Assemble</span>
-                  </button>
                 </div>
               </div>
             </div>

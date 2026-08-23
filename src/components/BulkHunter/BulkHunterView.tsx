@@ -14,6 +14,7 @@ import { fetchBulkHuntChecklist, recordAcquisition, fetchStoreProfiles } from '.
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
 
 import { StoreProfileModal } from './StoreProfileModal';
+import { CardDetailModal } from '../CardDetailModal';
 
 interface BulkHunterViewProps {
   decks: any[];
@@ -34,6 +35,7 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
   const [checklistData, setChecklistData] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [showStoreModal, setShowStoreModal] = useState(false);
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
 
   useEffect(() => {
     if (initialDeckId) {
@@ -79,6 +81,19 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
       const next = current < maxNeed ? current + 1 : 0; // Tapping cycles: 0 -> 1 -> 2 -> max -> 0
       return { ...prev, [cardId]: next };
     });
+  };
+
+  const openCardDetail = (item: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const card = allCards.find((c) => c.id === item.cardId) || {
+      id: item.cardId,
+      name: item.cardName,
+      supertype: item.supertype,
+      subtype: item.subtype,
+      defaultPrintingId: item.printing?.id,
+      printings: item.printing ? [item.printing] : [],
+    };
+    setViewingCardModal({ card, printing: item.printing });
   };
 
   const handleAcquireAllFound = async () => {
@@ -283,16 +298,27 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
                           }`}
                         >
                           <div className="flex items-center space-x-3">
-                            <img
-                              src={getImageUrl(item.printing, { name: item.cardName })}
-                              alt={item.cardName}
-                              onError={handleImageError}
-                              className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 bg-slate-100"
-                              referrerPolicy="no-referrer"
-                            />
+                            <button
+                              onClick={(e) => openCardDetail(item, e)}
+                              className="flex-shrink-0"
+                              title="Open card detail"
+                            >
+                              <img
+                                src={getImageUrl(item.printing, { name: item.cardName })}
+                                alt={item.cardName}
+                                onError={handleImageError}
+                                className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs bg-slate-100 hover:scale-105 transition-transform"
+                                referrerPolicy="no-referrer"
+                              />
+                            </button>
                             <div className="space-y-1">
                               <div className="flex items-center flex-wrap gap-1.5">
-                                <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
+                                <button
+                                  onClick={(e) => openCardDetail(item, e)}
+                                  className="font-bold text-sm text-slate-900 hover:text-indigo-700 transition text-left"
+                                >
+                                  {item.cardName}
+                                </button>
                                 {/* Regulation mark badge */}
                                 {mark && (
                                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${markStyle(mark)}`}>
@@ -407,6 +433,15 @@ export const BulkHunterView: React.FC<BulkHunterViewProps> = ({
               fetchBulkHuntChecklist(selectedDeckId, selectedStoreId).then((res) => setChecklistData(res));
             }
           }}
+        />
+      )}
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
         />
       )}
     </div>

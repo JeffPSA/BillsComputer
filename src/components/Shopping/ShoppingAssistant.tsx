@@ -13,14 +13,47 @@ import {
 } from 'lucide-react';
 import { fetchShoppingOptimization, searchMarketplace } from '../../services/api';
 import { ShoppingOptimizationResult, MarketplaceListing } from '../../types/tcg';
+import { CardDetailModal } from '../CardDetailModal';
 
-export const ShoppingAssistant: React.FC = () => {
+interface ShoppingAssistantProps {
+  allCards?: any[];
+}
+
+export const ShoppingAssistant: React.FC<ShoppingAssistantProps> = ({ allCards = [] }) => {
   const [optMode, setOptMode] = useState<'CHEAPEST_TOTAL' | 'FEWEST_SELLERS'>('CHEAPEST_TOTAL');
   const [optResult, setOptResult] = useState<ShoppingOptimizationResult | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<MarketplaceListing[]>([]);
   const [copiedText, setCopiedText] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
+
+  const findListingCard = (listing: MarketplaceListing) => {
+    const normalizedName = listing.cardName.trim().toLowerCase();
+    const card = allCards.find((c) => c.name?.trim().toLowerCase() === normalizedName);
+    if (!card) return null;
+
+    const printing = card.printings?.find((p: any) =>
+      listing.printingString.includes(p.setCode) && listing.printingString.includes(p.cardNumber)
+    ) || card.printings?.[0];
+
+    return { card, printing };
+  };
+
+  const renderListingCardName = (listing: MarketplaceListing, label: React.ReactNode) => {
+    const match = findListingCard(listing);
+    if (!match) return label;
+
+    return (
+      <button
+        onClick={() => setViewingCardModal(match)}
+        className="text-left hover:text-indigo-700 transition"
+        title="Open card detail"
+      >
+        {label}
+      </button>
+    );
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -160,7 +193,7 @@ export const ShoppingAssistant: React.FC = () => {
                 <div className="space-y-1">
                   <div className="flex items-center space-x-2">
                     <span className="font-bold text-sm text-slate-900">
-                      {item.requiredQty}x {item.cardName}
+                      {renderListingCardName(item.listing, `${item.requiredQty}x ${item.cardName}`)}
                     </span>
                     <span className="text-[10px] px-2.5 py-0.5 bg-indigo-50 text-indigo-800 rounded-lg font-bold border border-indigo-100">
                       {item.printingString}
@@ -214,7 +247,7 @@ export const ShoppingAssistant: React.FC = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search card name (e.g. Ultra Ball, Prime Catcher)..."
+            placeholder="Search card name..."
             className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 font-medium transition"
           />
           <button
@@ -233,7 +266,9 @@ export const ShoppingAssistant: React.FC = () => {
                 className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
               >
                 <div>
-                  <div className="font-bold text-slate-900">{listing.cardName} — {listing.printingString}</div>
+                  <div className="font-bold text-slate-900">
+                    {renderListingCardName(listing, `${listing.cardName} — ${listing.printingString}`)}
+                  </div>
                   <div className="text-slate-500 font-medium">
                     {listing.marketplace} • {listing.sellerName} ({listing.condition})
                   </div>
@@ -255,6 +290,15 @@ export const ShoppingAssistant: React.FC = () => {
           </div>
         )}
       </div>
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
+        />
+      )}
     </div>
   );
 };

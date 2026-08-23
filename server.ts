@@ -8,6 +8,7 @@ import {
   getPokemonCardById 
 } from './server/cardDataProvider';
 import { getDatabaseManager } from './server/database/index';
+import { syncAllCards, syncCardsForSet, syncIncremental, syncNewSetsAndCards, SyncProgress } from './server/cardSync';
 
 // Load environment variables from .env file
 config();
@@ -32,8 +33,7 @@ import {
   autoAllocateDeck,
   resolveBulkCategoryForCard
 } from './src/services/allocationEngine';
-import { searchCards } from './src/services/cardSearch';
-import { searchLocalCards, resolveCardForImport } from './server/localCardSearch';
+import { resolveCardForImport } from './server/localCardSearch';
 import {
   validateAllocationInvariants,
   applyManualAllocate,
@@ -45,6 +45,8 @@ export { validateAllocationInvariants };
 const PORT = 3000;
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
+const SQLITE_DB_FILE = path.join(DATA_DIR, 'cards.db');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -53,6 +55,22 @@ if (!fs.existsSync(DATA_DIR)) {
 
 // Initialize database manager
 const dbManager = getDatabaseManager();
+
+type AdminSyncMode = 'incremental' | 'force' | 'sets-only' | 'single-set';
+interface AdminSyncJob {
+  running: boolean;
+  stopRequested?: boolean;
+  mode?: AdminSyncMode;
+  startedAt?: string;
+  finishedAt?: string;
+  status?: 'idle' | 'running' | 'completed' | 'stopped' | 'failed';
+  progress?: SyncProgress;
+  stats?: any;
+  error?: string;
+  setId?: string;
+}
+
+let adminSyncJob: AdminSyncJob = { running: false, status: 'idle' };
 
 interface DatabaseSchema {
   cards: LogicalCard[];
@@ -163,6 +181,112 @@ function writeDb(db: DatabaseSchema) {
   dbManager.writeDb(db);
 }
 
+function getAdminHealth() {
+  const db = readDb();
+  const stats = dbManager.getStats();
+  const syncMetadata = dbManager.getSyncMetadata();
+  const allocationIntegrity = validateAllocationInvariants(db);
+
+  return {
+    stats: {
+      ...stats,
+      totalDeckRequirements: db.deckRequirements.length,
+      totalAllocations: db.allocations.length,
+      totalWishlistItems: db.wishlistItems.length,
+      totalAcquisitions: db.acquisitions.length,
+      totalStoreProfiles: db.storeProfiles.length,
+    },
+    syncMetadata,
+    allocationIntegrity,
+    syncJob: adminSyncJob,
+  };
+}
+
+function resolveAdminSetCode(rawSetCode: string): { id: string; name?: string } | null {
+  const normalized = rawSetCode.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const db = readDb();
+  const set = db.sets.find((s) =>
+    s.id.toLowerCase() === normalized ||
+    s.ptcgoCode?.toLowerCase() === normalized ||
+    s.name.toLowerCase() === normalized
+  );
+
+  return set ? { id: set.id, name: set.name } : null;
+}
+
+function startAdminSync(mode: AdminSyncMode, setId?: string): AdminSyncJob {
+  if (adminSyncJob.running) {
+    return adminSyncJob;
+  }
+
+  adminSyncJob = {
+    running: true,
+    stopRequested: false,
+    mode,
+    setId,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    progress: {
+      phase: 'sets',
+      message:
+        mode === 'force' ? 'Starting full resync...' :
+        mode === 'sets-only' ? 'Finding new sets and syncing their cards...' :
+        mode === 'single-set' ? `Starting set sync for ${setId}...` :
+        'Starting incremental sync...',
+      percent: 0,
+    },
+  };
+
+  const syncOptions = {
+    shouldStop: () => Boolean(adminSyncJob.stopRequested),
+    onProgress: (progress: SyncProgress) => {
+      adminSyncJob = {
+        ...adminSyncJob,
+        progress,
+      };
+    },
+  };
+
+  const syncPromise =
+    mode === 'force' ? syncAllCards(syncOptions) :
+    mode === 'sets-only' ? syncNewSetsAndCards(syncOptions) :
+    mode === 'single-set' && setId ? syncCardsForSet(setId, 250, syncOptions) :
+    syncIncremental(syncOptions);
+
+  syncPromise
+    .then((stats) => {
+      adminSyncJob = {
+        ...adminSyncJob,
+        running: false,
+        stopRequested: false,
+        finishedAt: new Date().toISOString(),
+        status: stats.stopped ? 'stopped' : 'completed',
+        progress: {
+          phase: stats.stopped ? 'stopped' : 'complete',
+          message: stats.stopped ? 'Sync stopped safely' : 'Sync complete',
+          cardsSynced: stats.cardsSynced,
+          setsSynced: stats.setsSynced,
+          percent: stats.stopped ? adminSyncJob.progress?.percent : 100,
+        },
+        stats,
+      };
+    })
+    .catch((err: any) => {
+      console.error('[Admin] Sync failed:', err);
+      adminSyncJob = {
+        ...adminSyncJob,
+        running: false,
+        stopRequested: false,
+        finishedAt: new Date().toISOString(),
+        error: err?.message || 'Sync failed',
+      };
+    });
+
+  return adminSyncJob;
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -236,6 +360,106 @@ async function startServer() {
     }
   });
 
+  // GET /api/admin/health (Protected database/admin health overview)
+  app.get('/api/admin/health', requireAuth, (_req, res) => {
+    try {
+      res.json(getAdminHealth());
+    } catch (err: any) {
+      console.error('[Admin] Error reading admin health:', err);
+      res.status(500).json({ error: 'Unable to read admin health' });
+    }
+  });
+
+  // POST /api/admin/sync (Protected controlled card sync)
+  app.post('/api/admin/sync', requireAuth, (req, res) => {
+    try {
+      const requestedMode = req.body?.mode;
+      const mode: AdminSyncMode =
+        requestedMode === 'force' ? 'force' :
+        requestedMode === 'sets-only' ? 'sets-only' :
+        requestedMode === 'single-set' ? 'single-set' :
+        'incremental';
+
+      let setId: string | undefined;
+      if (mode === 'single-set') {
+        const resolvedSet = resolveAdminSetCode(String(req.body?.setCode || req.body?.setId || ''));
+        if (!resolvedSet) {
+          return res.status(400).json({ error: 'Set not found. Use a set ID, set code, or exact set name from the local database.' });
+        }
+        setId = resolvedSet.id;
+      }
+
+      const alreadyRunning = adminSyncJob.running;
+      const syncJob = startAdminSync(mode, setId);
+      res.status(alreadyRunning ? 409 : 202).json({
+        success: !alreadyRunning,
+        syncJob,
+        message: alreadyRunning ? 'A sync is already running' :
+          mode === 'force' ? 'Full sync started' :
+          mode === 'sets-only' ? 'New-set scan started; any missing sets will be populated with card data' :
+          mode === 'single-set' ? `Single-set sync started for ${setId}` :
+          'Incremental sync started',
+      });
+    } catch (err: any) {
+      console.error('[Admin] Error starting sync:', err);
+      res.status(500).json({ error: 'Unable to start sync' });
+    }
+  });
+
+  // POST /api/admin/sync/stop (Protected cooperative sync stop)
+  app.post('/api/admin/sync/stop', requireAuth, (_req, res) => {
+    if (!adminSyncJob.running) {
+      return res.json({
+        success: false,
+        syncJob: adminSyncJob,
+        message: 'No sync is currently running',
+      });
+    }
+
+    adminSyncJob = {
+      ...adminSyncJob,
+      stopRequested: true,
+      progress: {
+        ...adminSyncJob.progress,
+        phase: adminSyncJob.progress?.phase || 'cards',
+        message: 'Stop requested. Sync will halt after the current API step finishes.',
+      },
+    };
+
+    res.json({
+      success: true,
+      syncJob: adminSyncJob,
+      message: 'Stop requested. Sync will halt safely after the current API step.',
+    });
+  });
+
+  // POST /api/admin/backup (Protected timestamped SQLite backup)
+  app.post('/api/admin/backup', requireAuth, async (_req, res) => {
+    try {
+      if (!fs.existsSync(SQLITE_DB_FILE)) {
+        return res.status(404).json({ error: 'SQLite database file not found' });
+      }
+      if (!fs.existsSync(BACKUP_DIR)) {
+        fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      }
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(BACKUP_DIR, `cards.db.admin-${stamp}.bak`);
+      const metadata = await dbManager.backup(backupPath);
+      const backupStat = fs.statSync(backupPath);
+      res.json({
+        success: true,
+        backupPath,
+        sizeBytes: backupStat.size,
+        pages: metadata.totalPages,
+        remainingPages: metadata.remainingPages,
+      });
+    } catch (err: any) {
+      console.error('[Admin] Error creating backup:', err);
+      res.status(500).json({ error: 'Unable to create database backup' });
+    }
+  });
+
   // GET /api/cards/search (LOCAL FIRST, API fallback only if empty)
   app.get('/api/cards/search', requireAuth, async (req, res) => {
     try {
@@ -245,29 +469,22 @@ async function startServer() {
       const page = parseInt((req.query.page as string) || '1', 10);
       const pageSize = parseInt((req.query.pageSize as string) || '30', 10);
 
-      const db = readDb();
-      
-      // Add printings to cards for search
-      const cardsWithPrintings = db.cards.map((c) => ({
-        ...c,
-        printings: db.printings.filter((p) => p.cardId === c.id),
-      }));
-
       // Try local search first
-      const localResults = searchLocalCards(cardsWithPrintings, query, { supertype, setCode });
+      const localSearch = dbManager.searchCardsWithPrintings({
+        query,
+        supertype,
+        setCode,
+        page,
+        pageSize,
+      });
       
-      if (localResults.length > 0) {
-        // Return local results with pagination
-        const startIndex = (page - 1) * pageSize;
-        const endIndex = startIndex + pageSize;
-        const paginatedResults = localResults.slice(startIndex, endIndex);
-        const allPrintings = paginatedResults.flatMap((c) => c.printings || []);
-        
+      if (localSearch.totalCount > 0) {
+        const allPrintings = localSearch.cards.flatMap((c) => c.printings || []);
         return res.json({
           success: true,
-          cards: paginatedResults,
+          cards: localSearch.cards,
           printings: allPrintings,
-          totalCount: localResults.length,
+          totalCount: localSearch.totalCount,
           page,
           pageSize,
         });
@@ -278,6 +495,7 @@ async function startServer() {
       const apiResult = await searchPokemonTcgApi(query, { supertype, setCode, page, pageSize });
 
       if (apiResult.success && apiResult.cards.length > 0) {
+        const db = readDb();
         cacheCardsInDb(db, apiResult.cards, apiResult.printings);
       }
 
@@ -306,24 +524,24 @@ async function startServer() {
       const query = (req.query.query as string || req.query.q as string || '').trim();
       const supertype = req.query.supertype as string;
 
-      const db = readDb();
-      const cardsWithPrintings = db.cards.map((c) => ({
-        ...c,
-        printings: db.printings.filter((p) => p.cardId === c.id),
-      }));
-
       if (query) {
         // Try local search first
-        const localResults = searchLocalCards(cardsWithPrintings, query, { supertype });
+        const localResults = dbManager.searchCardsWithPrintings({
+          query,
+          supertype,
+          page: 1,
+          pageSize: 250,
+        });
         
-        if (localResults.length > 0) {
-          return res.json(localResults);
+        if (localResults.totalCount > 0) {
+          return res.json(localResults.cards);
         }
         
         // Fallback to API only if local search empty
         console.log(`[Cards] Local search empty for "${query}", trying API fallback`);
         const apiResult = await searchPokemonTcgApi(query, { supertype });
         if (apiResult.success) {
+          const db = readDb();
           cacheCardsInDb(db, apiResult.cards, apiResult.printings);
           return res.json(apiResult.cards);
         } else {
@@ -331,8 +549,7 @@ async function startServer() {
         }
       }
 
-      const result = searchCards(cardsWithPrintings, query, { supertype });
-      res.json(result);
+      res.json(dbManager.getCardsWithPrintings());
     } catch (err: any) {
       console.error('[Server] Error in /api/cards:', err);
       res.status(500).json({ error: 'Internal server error', cards: [] });
@@ -408,19 +625,29 @@ async function startServer() {
 
   // GET /api/collection
   app.get('/api/collection', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getCollectionContext();
     const activeDeckIds = new Set(db.decks.filter((d) => d.status === 'Active').map((d) => d.id));
+    const cardsById = new Map(db.cards.map((card) => [card.id, card]));
+    const printingsById = new Map(db.printings.map((printing) => [printing.id, printing]));
+    const decksById = new Map(db.decks.map((deck) => [deck.id, deck]));
+    const allocationsByCollectionItemId = new Map<string, Allocation[]>();
+    for (const allocation of db.allocations) {
+      if (!activeDeckIds.has(allocation.deckId)) continue;
+      const current = allocationsByCollectionItemId.get(allocation.collectionItemId) || [];
+      current.push(allocation);
+      allocationsByCollectionItemId.set(allocation.collectionItemId, current);
+    }
 
     const enrichedCollection = db.collectionItems.map((item) => {
-      const card = db.cards.find((c) => c.id === item.cardId);
-      const printing = db.printings.find((p) => p.id === item.printingId);
+      const card = cardsById.get(item.cardId);
+      const printing = printingsById.get(item.printingId);
 
-      const itemAllocations = db.allocations.filter((a) => a.collectionItemId === item.id && activeDeckIds.has(a.deckId));
+      const itemAllocations = allocationsByCollectionItemId.get(item.id) || [];
       const allocatedQty = itemAllocations.reduce((sum, a) => sum + a.quantity, 0);
       const availableQty = Math.max(0, item.quantity - allocatedQty);
 
       const allocatedDetails = itemAllocations.map((a) => {
-        const deck = db.decks.find((d) => d.id === a.deckId);
+        const deck = decksById.get(a.deckId);
         return {
           allocationId: a.id,
           deckId: a.deckId,
@@ -445,7 +672,7 @@ async function startServer() {
   // POST /api/collection (Add/Update collection item)
   // BACKEND IS AUTHORITATIVE: Re-checks database for allocations before any deletion/quantity change
   app.post('/api/collection', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { id, cardId, printingId, quantity, condition, language, acquisitionSource, acquisitionCost, notes } = req.body;
 
     let targetCardId = cardId;
@@ -462,7 +689,8 @@ async function startServer() {
       return res.status(400).json({ error: 'cardId or collection item id required' });
     }
 
-    const prtId = printingId || (targetCardId ? db.cards.find((c) => c.id === targetCardId)?.defaultPrintingId : '') || existingItem?.printingId || '';
+    const targetCard = targetCardId ? dbManager.getCardById(targetCardId) : null;
+    const prtId = printingId || targetCard?.defaultPrintingId || existingItem?.printingId || '';
 
     if (id && existingItem) {
       const idx = db.collectionItems.findIndex((ci) => ci.id === id);
@@ -554,14 +782,14 @@ async function startServer() {
     // Auto-allocation should only happen via explicit user action (auto-allocate endpoint)
     // This prevents silent reallocation when modifying collection quantities
 
-    writeDb(db);
+    dbManager.replaceCollectionItemsAndAllocations(db.collectionItems, db.allocations);
     res.json({ success: true, collection: db.collectionItems });
   });
 
   // DELETE /api/collection/:id
   // BACKEND IS AUTHORITATIVE: Re-checks database for allocations before deletion
   app.delete('/api/collection/:id', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { id } = req.params;
 
     // Check for active allocations before deletion
@@ -581,19 +809,27 @@ async function startServer() {
     // CRITICAL FIX: Do NOT auto-allocate on collection deletion
     // Auto-allocation should only happen via explicit user action (auto-allocate endpoint)
 
-    writeDb(db);
+    dbManager.replaceCollectionItemsAndAllocations(db.collectionItems, db.allocations);
     res.json({ success: true, collection: db.collectionItems });
   });
 
   // GET /api/decks
   app.get('/api/decks', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getDeckContext();
+    const requirementsByDeckId = new Map<string, DeckRequirement[]>();
+    for (const requirement of db.deckRequirements) {
+      const current = requirementsByDeckId.get(requirement.deckId) || [];
+      current.push(requirement);
+      requirementsByDeckId.set(requirement.deckId, current);
+    }
+    const cardsById = new Map(db.cards.map((card) => [card.id, card]));
+    const printingsById = new Map(db.printings.map((printing) => [printing.id, printing]));
 
     const enrichedDecks = db.decks.map((deck) => {
-      const reqs = db.deckRequirements.filter((r) => r.deckId === deck.id);
+      const reqs = requirementsByDeckId.get(deck.id) || [];
 
       const cardOwnershipList = reqs.map((req) => {
-        const card = db.cards.find((c) => c.id === req.cardId);
+        const card = cardsById.get(req.cardId);
         if (!card) return null;
 
         const ownership = calculateCardOwnershipForDeck(
@@ -605,7 +841,7 @@ async function startServer() {
           db.allocations
         );
 
-        const printing = db.printings.find((p) => p.id === (req.preferredPrintingId || card.defaultPrintingId));
+        const printing = printingsById.get(req.preferredPrintingId || card.defaultPrintingId);
 
         return {
           requirement: req,
@@ -617,6 +853,8 @@ async function startServer() {
 
       const totalRequired = reqs.reduce((sum, r) => sum + r.quantity, 0);
       const totalAllocated = cardOwnershipList.reduce((sum, item) => sum + (item?.ownership.allocatedToThisDeck || 0), 0);
+      const totalAllocationMissing = Math.max(0, totalRequired - totalAllocated);
+      const totalCollectionMissing = cardOwnershipList.reduce((sum, item) => sum + (item?.ownership.missing || 0), 0);
       const uniqueCardCount = reqs.length; // Count of unique card types
       const isFullyOwned = cardOwnershipList.every((item) => item?.ownership.status === 'FULLY_OWNED');
 
@@ -625,6 +863,8 @@ async function startServer() {
         requirements: cardOwnershipList,
         totalRequiredCards: totalRequired,
         totalAllocatedCards: totalAllocated,
+        totalAllocationMissingCards: totalAllocationMissing,
+        totalCollectionMissingCards: totalCollectionMissing,
         uniqueCardCount: uniqueCardCount,
         isFullyOwned,
       };
@@ -635,13 +875,16 @@ async function startServer() {
 
   // POST /api/decks (Create or Update deck)
   app.post('/api/decks', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { id, name, version, format, status, isPermanentlyAssembled, notes, requirements } = req.body;
 
     let deck: Deck;
+    let wasActiveBeforeUpdate = false;
+    let deckRequirementsForSave: DeckRequirement[] | undefined;
     if (id) {
       const idx = db.decks.findIndex((d) => d.id === id);
       if (idx !== -1) {
+        wasActiveBeforeUpdate = db.decks[idx].status === 'Active';
         db.decks[idx] = {
           ...db.decks[idx],
           name: name || db.decks[idx].name,
@@ -684,6 +927,7 @@ async function startServer() {
           preferredPrintingId: r.preferredPrintingId,
         });
       }
+      deckRequirementsForSave = db.deckRequirements.filter((r) => r.deckId === deck.id);
 
       // Cleanup orphaned allocations for this deck
       const validReqIds = new Set(db.deckRequirements.filter((r) => r.deckId === deck.id).map((r) => r.id));
@@ -694,32 +938,30 @@ async function startServer() {
       // This prevents silent allocation of collection cards when creating decks
     }
 
-    writeDb(db);
+    if (wasActiveBeforeUpdate && deck.status !== 'Active') {
+      db.allocations = db.allocations.filter((a) => a.deckId !== deck.id);
+    }
+
+    const invariant = validateAllocationInvariants(db);
+    if (!invariant.ok) {
+      return res.status(400).json({ error: invariant.error });
+    }
+
+    dbManager.saveDeckWithRequirements(deck, deckRequirementsForSave, db.allocations);
     res.json(deck);
   });
 
   // DELETE /api/decks/:id
   app.delete('/api/decks/:id', requireAuth, (req, res) => {
-    const db = readDb();
     const { id } = req.params;
 
-    db.decks = db.decks.filter((d) => d.id !== id);
-    db.deckRequirements = db.deckRequirements.filter((r) => r.deckId !== id);
-    db.allocations = db.allocations.filter((a) => a.deckId !== id);
-
-    // Re-allocate released copies to remaining active decks
-    const activeDecks = db.decks.filter((d) => d.status === 'Active');
-    for (const d of activeDecks) {
-      db.allocations = autoAllocateDeck(d.id, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
-    }
-
-    writeDb(db);
+    dbManager.deleteDeckById(id);
     res.json({ success: true });
   });
 
   // POST /api/decks/:id/auto-allocate
   app.post('/api/decks/:id/auto-allocate', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { id } = req.params;
 
     const deck = db.decks.find((d) => d.id === id);
@@ -741,13 +983,13 @@ async function startServer() {
       return res.status(400).json({ error: invariant.error });
     }
 
-    writeDb(db);
+    dbManager.replaceAllocations(db.allocations);
     res.json({ success: true, allocations: db.allocations });
   });
 
   // POST /api/allocations/allocate (Manual allocate collection item to deck requirement)
   app.post('/api/allocations/allocate', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { deckId, requirementId, collectionItemId, quantity } = req.body;
 
     if (!deckId || !requirementId || !collectionItemId) {
@@ -766,13 +1008,13 @@ async function startServer() {
     }
 
     db.allocations = result.allocations!;
-    writeDb(db);
+    dbManager.replaceAllocations(db.allocations);
     res.json({ success: true, allocations: db.allocations });
   });
 
   // POST /api/allocations/release (Release part or all of an allocation)
   app.post('/api/allocations/release', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { allocationId, quantity } = req.body;
 
     if (!allocationId) {
@@ -789,13 +1031,13 @@ async function startServer() {
     }
 
     db.allocations = result.allocations!;
-    writeDb(db);
+    dbManager.replaceAllocations(db.allocations);
     res.json({ success: true, allocations: db.allocations });
   });
 
   // POST /api/allocations/move (Transfer allocations directly between decks)
   app.post('/api/allocations/move', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { sourceDeckId, targetDeckId, cardId, quantity } = req.body;
 
     if (!sourceDeckId || !targetDeckId || !cardId) {
@@ -854,7 +1096,7 @@ async function startServer() {
       return res.status(400).json({ error: invariant.error });
     }
 
-    writeDb(db);
+    dbManager.replaceAllocations(db.allocations);
     res.json({ success: true, moved: moveQty - remainingToMove, allocations: db.allocations });
   });
 
@@ -930,45 +1172,44 @@ async function startServer() {
 
   // GET /api/store-profiles
   app.get('/api/store-profiles', requireAuth, (req, res) => {
-    const db = readDb();
-    res.json(db.storeProfiles);
+    res.json(dbManager.getStoreProfiles());
   });
 
   // POST /api/store-profiles
   app.post('/api/store-profiles', requireAuth, (req, res) => {
-    const db = readDb();
+    const storeProfiles = dbManager.getStoreProfiles();
     const { id, name, categories, overrides } = req.body;
 
     if (id) {
-      const idx = db.storeProfiles.findIndex((sp) => sp.id === id);
+      const idx = storeProfiles.findIndex((sp) => sp.id === id);
       if (idx !== -1) {
-        db.storeProfiles[idx] = {
-          ...db.storeProfiles[idx],
-          name: name || db.storeProfiles[idx].name,
-          categories: categories || db.storeProfiles[idx].categories,
-          overrides: overrides || db.storeProfiles[idx].overrides,
+        storeProfiles[idx] = {
+          ...storeProfiles[idx],
+          name: name || storeProfiles[idx].name,
+          categories: categories || storeProfiles[idx].categories,
+          overrides: overrides || storeProfiles[idx].overrides,
         };
       }
     } else {
       const newSp: StoreProfile = {
         id: `sp_${Date.now()}`,
         name: name || 'Custom Store Profile',
-        isDefault: db.storeProfiles.length === 0,
+        isDefault: storeProfiles.length === 0,
         categories: categories || [],
         overrides: overrides || [],
       };
-      db.storeProfiles.push(newSp);
+      storeProfiles.push(newSp);
     }
 
-    writeDb(db);
-    res.json(db.storeProfiles);
+    dbManager.replaceStoreProfiles(storeProfiles);
+    res.json(storeProfiles);
   });
 
   // POST /api/store-profiles/duplicate
   app.post('/api/store-profiles/duplicate', requireAuth, (req, res) => {
-    const db = readDb();
+    const storeProfiles = dbManager.getStoreProfiles();
     const { id } = req.body;
-    const existing = db.storeProfiles.find((sp) => sp.id === id);
+    const existing = storeProfiles.find((sp) => sp.id === id);
     if (!existing) {
       return res.status(404).json({ error: 'Store profile not found' });
     }
@@ -980,55 +1221,66 @@ async function startServer() {
       categories: existing.categories.map((c) => ({ ...c, id: `cat_${Date.now()}_${Math.random().toString(36).substring(2, 5)}` })),
       overrides: existing.overrides.map((o) => ({ ...o, id: `ov_${Date.now()}_${Math.random().toString(36).substring(2, 5)}` })),
     };
-    db.storeProfiles.push(newSp);
-    writeDb(db);
-    res.json({ success: true, storeProfiles: db.storeProfiles, newProfile: newSp });
+    storeProfiles.push(newSp);
+    dbManager.replaceStoreProfiles(storeProfiles);
+    res.json({ success: true, storeProfiles, newProfile: newSp });
   });
 
   // POST /api/store-profiles/default
   app.post('/api/store-profiles/default', requireAuth, (req, res) => {
-    const db = readDb();
+    const storeProfiles = dbManager.getStoreProfiles();
     const { id } = req.body;
-    db.storeProfiles = db.storeProfiles.map((sp) => ({
+    const updatedStoreProfiles = storeProfiles.map((sp) => ({
       ...sp,
       isDefault: sp.id === id,
     }));
-    writeDb(db);
-    res.json(db.storeProfiles);
+    dbManager.replaceStoreProfiles(updatedStoreProfiles);
+    res.json(updatedStoreProfiles);
   });
 
   // DELETE /api/store-profiles/:id
   app.delete('/api/store-profiles/:id', requireAuth, (req, res) => {
-    const db = readDb();
+    let storeProfiles = dbManager.getStoreProfiles();
     const { id } = req.params;
-    if (db.storeProfiles.length <= 1) {
+    if (storeProfiles.length <= 1) {
       return res.status(400).json({ error: 'Cannot delete the only store profile' });
     }
-    db.storeProfiles = db.storeProfiles.filter((sp) => sp.id !== id);
-    if (!db.storeProfiles.some((sp) => sp.isDefault)) {
-      db.storeProfiles[0].isDefault = true;
+    storeProfiles = storeProfiles.filter((sp) => sp.id !== id);
+    if (!storeProfiles.some((sp) => sp.isDefault)) {
+      storeProfiles[0].isDefault = true;
     }
-    writeDb(db);
-    res.json(db.storeProfiles);
+    dbManager.replaceStoreProfiles(storeProfiles);
+    res.json(storeProfiles);
   });
 
   // GET /api/bulk-hunt (Generate physical store bulk hunting checklist)
   app.get('/api/bulk-hunt', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = {
+      ...dbManager.getDeckContext(),
+      storeProfiles: dbManager.getStoreProfiles(),
+    };
     const deckId = req.query.deckId as string;
     const storeProfileId = req.query.storeProfileId as string;
 
     const storeProfile = db.storeProfiles.find((sp) => sp.id === storeProfileId) || db.storeProfiles[0];
+    const requirementsByDeckId = new Map<string, DeckRequirement[]>();
+    for (const requirement of db.deckRequirements) {
+      const current = requirementsByDeckId.get(requirement.deckId) || [];
+      current.push(requirement);
+      requirementsByDeckId.set(requirement.deckId, current);
+    }
+    const cardsById = new Map(db.cards.map((card) => [card.id, card]));
+    const printingsById = new Map(db.printings.map((printing) => [printing.id, printing]));
 
     // Determine missing cards
     let shortfalls: { cardId: string; cardName: string; missing: number; preferredPrintingId?: string }[] = [];
 
     if (deckId && deckId !== 'ALL') {
-      const reqs = db.deckRequirements.filter((r) => r.deckId === deckId);
+      const reqs = requirementsByDeckId.get(deckId) || [];
       const deck = db.decks.find((d) => d.id === deckId);
       if (deck) {
         shortfalls = reqs.map((req) => {
-          const card = db.cards.find((c) => c.id === req.cardId);
+          const card = cardsById.get(req.cardId);
           if (!card) return null;
           const ownership = calculateCardOwnershipForDeck(card, req, deck, db.decks, db.collectionItems, db.allocations);
           return {
@@ -1040,7 +1292,9 @@ async function startServer() {
         }).filter((item): item is NonNullable<typeof item> => item !== null && item.missing > 0);
       }
     } else {
-      const multiShortfalls = calculateMultiDeckShortfalls(db.decks, db.deckRequirements, db.collectionItems, db.cards);
+      const multiShortfalls = calculateMultiDeckShortfalls(db.decks, db.deckRequirements, db.collectionItems, db.cards, {
+        includeInactiveDecks: true,
+      });
       shortfalls = multiShortfalls.map((s) => ({
         cardId: s.cardId,
         cardName: s.cardName,
@@ -1050,14 +1304,14 @@ async function startServer() {
 
     // Group missing cards by Bulk Categories
     const categoryMap = new Map<string, any[]>();
-    for (const cat of storeProfile.categories) {
+    for (const cat of storeProfile?.categories || []) {
       categoryMap.set(cat.name, []);
     }
 
     for (const item of shortfalls) {
-      const card = db.cards.find((c) => c.id === item.cardId);
+      const card = cardsById.get(item.cardId);
       if (!card) continue;
-      const printing = db.printings.find((p) => p.id === (item.preferredPrintingId || card.defaultPrintingId));
+      const printing = printingsById.get(item.preferredPrintingId || card.defaultPrintingId);
 
       const categoryName = resolveBulkCategoryForCard(card, printing, storeProfile);
       if (!categoryMap.has(categoryName)) {
@@ -1113,7 +1367,7 @@ async function startServer() {
     const groupedList = Array.from(categoryMap.entries())
       .filter(([_, items]) => items.length > 0)
       .map(([categoryName, items]) => {
-        const catInfo = storeProfile.categories.find((c) => c.name === categoryName);
+        const catInfo = storeProfile?.categories?.find((c) => c.name === categoryName);
         const sortedItems = items.sort((a: any, b: any) => {
           // 1. Regulation mark (G → H → I → J → unknown → none)
           const regDiff = regulationRank(a.regulationMark) - regulationRank(b.regulationMark);
@@ -1140,30 +1394,32 @@ async function startServer() {
 
   // POST /api/acquisitions (Acquire cards into collection)
   app.post('/api/acquisitions', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getAllocationContext();
     const { cardId, printingId, quantity, source, method, costPerUnit, deckIdToAllocate } = req.body;
 
     if (!cardId) {
       return res.status(400).json({ error: 'cardId required' });
     }
 
-    const card = db.cards.find((c) => c.id === cardId);
+    const card = dbManager.getCardById(cardId);
     const prtId = printingId || card?.defaultPrintingId || '';
     const qty = Number(quantity || 1);
+    const unitCost = Number(costPerUnit || 0.25);
 
     // Record Acquisition Log
-    const acq: Acquisition = {
+    const acq = {
       id: `acq_${Date.now()}`,
+      cardId,
       cardName: card ? card.name : 'Unknown Card',
       printingId: prtId,
       quantity: qty,
       source: source || 'Local Store Bulk Hunt',
       method: method || 'Bulk',
       date: new Date().toISOString().split('T')[0],
-      costPerUnit: Number(costPerUnit || 0.25),
+      costPerUnit: unitCost,
+      totalCost: unitCost * qty,
       notes: `Acquired ${qty}x ${card?.name || 'Card'}`,
     };
-    db.acquisitions.push(acq);
 
     // Add into Collection
     let colItem = db.collectionItems.find((ci) => ci.cardId === cardId && ci.printingId === prtId && ci.condition === 'NM');
@@ -1179,7 +1435,7 @@ async function startServer() {
         language: 'English',
         acquisitionSource: source || 'Bulk Hunt',
         acquisitionDate: new Date().toISOString().split('T')[0],
-        acquisitionCost: Number(costPerUnit || 0.25),
+        acquisitionCost: unitCost,
       };
       db.collectionItems.push(colItem);
     }
@@ -1190,50 +1446,93 @@ async function startServer() {
       db.allocations = autoAllocateDeck(deckIdToAllocate, db.deckRequirements, db.collectionItems, db.allocations, activeDecks);
     }
 
-    writeDb(db);
+    dbManager.saveAcquisitionCollectionAndAllocations(acq, db.collectionItems, db.allocations);
     res.json({ success: true, acquisition: acq, collectionItem: colItem });
   });
 
-  // GET /api/marketplace/search (Realist market search across TCGPlayer, eBay, BOB's Shop, PokeBulk)
+  // GET /api/marketplace/search (Search links across international and South African marketplaces)
   app.get('/api/marketplace/search', requireAuth, (req, res) => {
-    const db = readDb();
     const query = (req.query.query as string || '').trim();
 
     if (!query) {
       return res.json([]);
     }
 
-    const matchingCards = db.cards.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()));
+    const matchingCards = dbManager.searchCardsWithPrintings({
+      query,
+      page: 1,
+      pageSize: 25,
+    }).cards;
     const results: MarketplaceListing[] = [];
 
-    const marketplaces: ('TCGPlayer' | 'eBay' | "BOB's Shop" | 'PokeBulk' | 'Local Game Store')[] = [
-      'TCGPlayer',
-      'eBay',
-      "BOB's Shop",
-      'PokeBulk',
-      'Local Game Store',
+    const marketplaces: {
+      name: MarketplaceListing['marketplace'];
+      sellerName: string;
+      shippingPrice: number;
+      priceVariance: number;
+      buildUrl: (card: LogicalCard, printing: CardPrinting) => string;
+    }[] = [
+      {
+        name: 'Pokeverse',
+        sellerName: 'Pokeverse SA',
+        shippingPrice: 0,
+        priceVariance: 0.05,
+        buildUrl: (card, printing) => `https://pokeverse.co.za/?s=${encodeURIComponent(`${card.name} ${printing.setCode} ${printing.cardNumber}`)}&post_type=product`,
+      },
+      {
+        name: 'PokeBulk',
+        sellerName: 'PokeBulk SA',
+        shippingPrice: 0,
+        priceVariance: -0.1,
+        buildUrl: () => 'https://www.pokebulk.co.za/cards',
+      },
+      {
+        name: 'Bob Shop',
+        sellerName: 'Bob Shop SA marketplace',
+        shippingPrice: 2.5,
+        priceVariance: 0.15,
+        buildUrl: (card, printing) => `https://www.bobshop.co.za/search/${encodeURIComponent(`${card.name} ${printing.setCode} ${printing.cardNumber}`)}`,
+      },
+      {
+        name: 'TCGPlayer',
+        sellerName: 'TCGPlayer marketplace',
+        shippingPrice: 0.99,
+        priceVariance: 0,
+        buildUrl: (card, printing) => `https://www.tcgplayer.com/search/pokemon/product?productLineName=pokemon&q=${encodeURIComponent(`${card.name} ${printing.setCode} ${printing.cardNumber}`)}&view=grid`,
+      },
+      {
+        name: 'eBay',
+        sellerName: 'eBay marketplace',
+        shippingPrice: 1.5,
+        priceVariance: 0.1,
+        buildUrl: (card, printing) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(`${card.name} ${printing.setCode} ${printing.cardNumber}`)}`,
+      },
+      {
+        name: 'Local Game Store',
+        sellerName: 'Local Game Store manual check',
+        shippingPrice: 0,
+        priceVariance: 0,
+        buildUrl: () => 'https://www.google.com/search?q=local+game+store+pokemon+cards+south+africa',
+      },
     ];
 
     matchingCards.forEach((card) => {
-      const printings = db.printings.filter((p) => p.cardId === card.id);
-      printings.forEach((p) => {
+      (card.printings || []).forEach((p) => {
         marketplaces.forEach((mkt, idx) => {
           const basePrice = p.marketPrice || 1.0;
-          const variance = (idx - 2) * 0.15;
-          const price = Math.max(0.25, parseFloat((basePrice * (1 + variance)).toFixed(2)));
-          const shipping = mkt === 'TCGPlayer' ? 0.99 : mkt === 'eBay' ? 1.50 : mkt === "BOB's Shop" ? 2.50 : 0.00;
+          const price = Math.max(0.25, parseFloat((basePrice * (1 + mkt.priceVariance)).toFixed(2)));
 
           results.push({
             id: `mkt_${card.id}_${p.id}_${idx}`,
-            marketplace: mkt,
+            marketplace: mkt.name,
             cardName: card.name,
             printingString: `${p.setName} (${p.setCode} ${p.cardNumber})`,
-            sellerName: `${mkt} Verified Seller #${idx + 1}`,
+            sellerName: mkt.sellerName,
             condition: 'NM',
             itemPrice: price,
-            shippingPrice: shipping,
+            shippingPrice: mkt.shippingPrice,
             availableQty: 4 + idx * 2,
-            listingUrl: `https://${mkt.toLowerCase().replace(/[^a-z]/g, '')}.com/search?q=${encodeURIComponent(card.name)}`,
+            listingUrl: mkt.buildUrl(card, p),
           });
         });
       });
@@ -1244,10 +1543,12 @@ async function startServer() {
 
   // GET /api/marketplace/optimize (Shopping Optimizer)
   app.get('/api/marketplace/optimize', requireAuth, (req, res) => {
-    const db = readDb();
+    const db = dbManager.getDeckContext();
     const mode = (req.query.mode as 'CHEAPEST_TOTAL' | 'FEWEST_SELLERS') || 'CHEAPEST_TOTAL';
 
     const shortfalls = calculateMultiDeckShortfalls(db.decks, db.deckRequirements, db.collectionItems, db.cards);
+    const cardsById = new Map(db.cards.map((card) => [card.id, card]));
+    const printingsById = new Map(db.printings.map((printing) => [printing.id, printing]));
 
     const items: ShoppingOptimizationResult['items'] = [];
     let totalCardCost = 0;
@@ -1255,9 +1556,9 @@ async function startServer() {
     const sellersUsed = new Set<string>();
 
     shortfalls.forEach((shortfall) => {
-      const card = db.cards.find((c) => c.id === shortfall.cardId);
+      const card = cardsById.get(shortfall.cardId);
       if (!card) return;
-      const printing = db.printings.find((p) => p.id === card.defaultPrintingId);
+      const printing = printingsById.get(card.defaultPrintingId);
 
       const basePrice = printing?.marketPrice || 1.20;
       const shipping = mode === 'FEWEST_SELLERS' ? 0.0 : 0.99;
@@ -1416,7 +1717,9 @@ async function startServer() {
   });
 
   // --- VITE MIDDLEWARE / STATIC SERVING ---
-  if (process.env.NODE_ENV !== 'production') {
+  const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+  const isBuiltServer = entryPath.endsWith(`${path.sep}dist${path.sep}server.cjs`);
+  if (process.env.NODE_ENV !== 'production' && !isBuiltServer) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

@@ -3,13 +3,15 @@ import {
   Layers,
   Box,
   Share2,
-  PackageCheck,
   Compass,
   ShoppingBag,
   Bookmark,
   LayoutDashboard,
   Plus,
-  LogOut
+  LogOut,
+  Database,
+  Moon,
+  Sun
 } from 'lucide-react';
 
 
@@ -22,7 +24,8 @@ export type ActiveTab =
   | 'assemble'
   | 'bulk-hunter'
   | 'shopping'
-  | 'wishlist';
+  | 'wishlist'
+  | 'admin';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -31,6 +34,8 @@ interface NavbarProps {
   onOpenQuickAddCollection: () => void;
   onLogout?: () => void;
   isAuthenticated?: boolean;
+  theme: 'light' | 'dark';
+  onToggleTheme: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -40,16 +45,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenQuickAddCollection,
   onLogout,
   isAuthenticated,
+  theme,
+  onToggleTheme,
 }: NavbarProps) => {
   const navItems: { id: ActiveTab; label: string; icon: React.ReactNode; badge?: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'decks', label: 'Decks', icon: <Layers className="w-4 h-4" /> },
     { id: 'collection', label: 'Collection', icon: <Box className="w-4 h-4" /> },
     { id: 'allocations', label: 'Allocations', icon: <Share2 className="w-4 h-4" /> },
-    { id: 'assemble', label: 'Assemble Deck', icon: <PackageCheck className="w-4 h-4" /> },
     { id: 'bulk-hunter', label: 'Bulk Hunter', icon: <Compass className="w-4 h-4" />, badge: 'Mobile' },
     { id: 'shopping', label: 'Shopping', icon: <ShoppingBag className="w-4 h-4" /> },
     { id: 'wishlist', label: 'Wishlist', icon: <Bookmark className="w-4 h-4" /> },
+    { id: 'admin', label: 'Admin', icon: <Database className="w-4 h-4" /> },
   ];
 
   return (
@@ -77,6 +84,14 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-2">
+            <button
+              onClick={onToggleTheme}
+              className="inline-flex h-8 w-8 items-center justify-center bg-white/10 hover:bg-white/20 text-white rounded-xl border border-white/20 transition"
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {theme === 'dark' ? <Sun className="w-3.5 h-3.5 stroke-[2.5]" /> : <Moon className="w-3.5 h-3.5 stroke-[2.5]" />}
+            </button>
             <button
               onClick={onOpenQuickAddCollection}
               className="inline-flex items-center space-x-1 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl border border-white/20 transition"

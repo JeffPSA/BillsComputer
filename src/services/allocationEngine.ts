@@ -98,10 +98,13 @@ export function calculateMultiDeckShortfalls(
   decks: Deck[],
   requirements: DeckRequirement[],
   collectionItems: CollectionItem[],
-  cards: LogicalCard[]
+  cards: LogicalCard[],
+  options?: { includeInactiveDecks?: boolean }
 ): { cardId: string; cardName: string; totalRequired: number; totalOwned: number; missing: number }[] {
-  const activeDecks = decks.filter((d) => d.status === 'Active');
-  const activeDeckIds = new Set(activeDecks.map((d) => d.id));
+  const includedDecks = options?.includeInactiveDecks
+    ? decks
+    : decks.filter((d) => d.status === 'Active');
+  const activeDeckIds = new Set(includedDecks.map((d) => d.id));
 
   const activeRequirements = requirements.filter((r) => activeDeckIds.has(r.deckId));
 

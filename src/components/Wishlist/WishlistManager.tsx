@@ -6,9 +6,11 @@ import {
   Check,
   Compass,
   ShoppingBag,
-  Sparkles
+  Sparkles,
+  Eye
 } from 'lucide-react';
 import { AcquisitionPreference } from '../../types/tcg';
+import { CardDetailModal } from '../CardDetailModal';
 
 interface WishlistManagerProps {
   allCards: any[];
@@ -21,37 +23,18 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
   onNavigateToBulk,
   onNavigateToShopping,
 }) => {
-  const [wishlistItems, setWishlistItems] = useState<any[]>([
-    {
-      id: 'wl_1',
-      cardName: 'Prime Catcher',
-      targetQuantity: 1,
-      preferredAcquisition: 'Online',
-      priority: 'High',
-      notes: 'ACE SPEC essential for Mega Darkrai competitive list',
-    },
-    {
-      id: 'wl_2',
-      cardName: 'Buddy-Buddy Poffen',
-      targetQuantity: 3,
-      preferredAcquisition: 'Bulk',
-      priority: 'High',
-      notes: 'Look for in local game store bulk boxes',
-    },
-    {
-      id: 'wl_3',
-      cardName: 'Secret Box',
-      targetQuantity: 1,
-      preferredAcquisition: 'Local Singles',
-      priority: 'Medium',
-      notes: 'Alternative ACE SPEC for Darkrai ex',
-    },
-  ]);
+  const [wishlistItems, setWishlistItems] = useState<any[]>([]);
 
   const [newCardName, setNewCardName] = useState('');
   const [newQty, setNewQty] = useState(1);
   const [newPref, setNewPref] = useState<AcquisitionPreference>('Bulk');
   const [newPriority, setNewPriority] = useState<'High' | 'Medium' | 'Low'>('High');
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
+
+  const findWishlistCard = (cardName: string) => {
+    const normalizedName = cardName.trim().toLowerCase();
+    return allCards.find((card) => card.name?.trim().toLowerCase() === normalizedName);
+  };
 
   const handleAddItem = (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,7 +99,7 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
             type="text"
             value={newCardName}
             onChange={(e) => setNewCardName(e.target.value)}
-            placeholder="Card Name (e.g. Prime Catcher)..."
+            placeholder="Card name..."
             className="bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 font-medium"
           />
 
@@ -154,11 +137,25 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
       {/* Wishlist Items Table */}
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
         <div className="divide-y divide-slate-100">
-          {wishlistItems.map((item) => (
+          {wishlistItems.map((item) => {
+            const matchedCard = findWishlistCard(item.cardName);
+            const matchedPrinting = matchedCard?.printings?.[0];
+
+            return (
             <div key={item.id} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50 transition">
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
-                  <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
+                  {matchedCard ? (
+                    <button
+                      onClick={() => setViewingCardModal({ card: matchedCard, printing: matchedPrinting })}
+                      className="font-bold text-sm text-slate-900 hover:text-indigo-700 transition flex items-center gap-1.5 text-left"
+                    >
+                      <span>{item.cardName}</span>
+                      <Eye className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  ) : (
+                    <span className="font-bold text-sm text-slate-900">{item.cardName}</span>
+                  )}
                   <span
                     className={`text-[10px] px-2.5 py-0.5 rounded-full font-black uppercase ${
                       item.priority === 'High'
@@ -187,13 +184,23 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
                 </button>
               </div>
             </div>
-          ))}
+            );
+          })}
 
           {wishlistItems.length === 0 && (
             <div className="p-8 text-center text-xs text-slate-400 italic font-medium">Wishlist is empty.</div>
           )}
         </div>
       </div>
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
+        />
+      )}
     </div>
   );
 };

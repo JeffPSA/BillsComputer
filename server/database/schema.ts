@@ -185,13 +185,31 @@ export function createSchema(db: SQLiteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_printings_setCode ON printings(setCode)
   `);
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_printings_setCode_cardNumber ON printings(setCode, cardNumber)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cards_name ON cards(name)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_cards_supertype ON cards(supertype)
+  `);
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_collection_items_cardId ON collection_items(cardId)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_deck_requirements_deckId ON deck_requirements(deckId)
   `);
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_deck_requirements_cardId ON deck_requirements(cardId)
+  `);
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_allocations_deckId ON allocations(deckId)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_allocations_collectionItemId ON allocations(collectionItemId)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_allocations_requirementId ON allocations(requirementId)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_decks_status ON decks(status)

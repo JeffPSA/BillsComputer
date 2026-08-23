@@ -17,6 +17,7 @@ interface DashboardProps {
   decks: any[];
   collection: any[];
   setActiveTab: (tab: ActiveTab) => void;
+  onSelectDeck: (deckId: string) => void;
   onOpenImportModal: () => void;
   onOpenQuickAddCollection: () => void;
 }
@@ -25,6 +26,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   decks,
   collection,
   setActiveTab,
+  onSelectDeck,
   onOpenImportModal,
   onOpenQuickAddCollection,
 }) => {
@@ -116,13 +118,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
           <div className="space-y-3">
             {activeDecks.map((deck) => {
-              const reqs = deck.requirements || [];
-              const missingCount = reqs.filter((r: any) => r.ownership?.status !== 'FULLY_OWNED').length;
+              const allocationMissingCards =
+                deck.totalAllocationMissingCards ?? Math.max(0, (deck.totalRequiredCards || 0) - (deck.totalAllocatedCards || 0));
 
               return (
                 <div
                   key={deck.id}
-                  className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center justify-between hover:border-indigo-300 transition-all"
+                  onClick={() => onSelectDeck(deck.id)}
+                  className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center justify-between hover:border-indigo-300 hover:bg-indigo-50/40 transition-all cursor-pointer"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
@@ -145,15 +148,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </span>
                     ) : (
                       <span className="inline-flex items-center px-2.5 py-1 bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-xl">
-                        ⚠️ {missingCount} Shortfalls
+                        ⚠️ {allocationMissingCards} Not Allocated
                       </span>
                     )}
 
                     <button
-                      onClick={() => setActiveTab('assemble')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectDeck(deck.id);
+                      }}
                       className="px-3.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-sm"
                     >
-                      Assemble
+                      Manage
                     </button>
                   </div>
                 </div>

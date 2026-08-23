@@ -135,6 +135,39 @@ function allocationIdTimestamp(id: string): number {
   return Number.isFinite(ts) ? ts : 0;
 }
 
+interface CardSearchOptions {
+  query?: string;
+  supertype?: string;
+  setCode?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+interface StoredAcquisition extends Acquisition {
+  cardId: string;
+  totalCost: number;
+}
+
+function parseJsonField<T>(value: unknown, fallback: T): T {
+  if (!value || typeof value !== 'string') {
+    return fallback;
+  }
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeSearchText(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .replace(/['’'"`]/g, '')
+    .replace(/#/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Dedupe allocations by (deckId, requirementId, collectionItemId), keeping the newest row
  * (highest embedded timestamp in id; ties broken by id DESC). Does NOT sum quantities —
@@ -251,6 +284,10 @@ export class DatabaseManager {
     return this.db;
   }
 
+  async backup(destinationFile: string): Promise<Database.BackupMetadata> {
+    return this.db.backup(destinationFile);
+  }
+
   private initialize(): void {
     createSchema(this.db);
     assertPrintingInsertAligned(this.db);
@@ -313,6 +350,656 @@ export class DatabaseManager {
         this.db.exec('ALTER TABLE allocations ADD COLUMN isLocked INTEGER DEFAULT 0');
       }
     }
+  }
+
+  private parseCardRow(row: any): LogicalCard {
+    return {
+      ...row,
+      types: parseJsonField(row.types, []),
+      rules: parseJsonField(row.rules, []),
+      isAceSpec: Boolean(row.isAceSpec),
+    };
+  }
+
+  private parsePrintingRow(row: any): CardPrinting {
+    return {
+      ...row,
+      attacks: parseJsonField(row.attacks, []),
+      abilities: parseJsonField(row.abilities, []),
+      weaknesses: parseJsonField(row.weaknesses, []),
+      resistances: parseJsonField(row.resistances, []),
+      nationalPokedexNumbers: parseJsonField(row.nationalPokedexNumbers, []),
+      legalities: parseJsonField(row.legalities, {}),
+    };
+  }
+
+  private attachPrintings(cards: LogicalCard[], printings: CardPrinting[]): LogicalCard[] {
+    const printingsByCardId = new Map<string, CardPrinting[]>();
+    for (const printing of printings) {
+      const current = printingsByCardId.get(printing.cardId) || [];
+      current.push(printing);
+      printingsByCardId.set(printing.cardId, current);
+    }
+
+    return cards.map((card) => ({
+      ...card,
+      printings: printingsByCardId.get(card.id) || [],
+    }));
+  }
+
+  private parseAllocationRow(row: any): Allocation {
+    return {
+      ...row,
+      isLocked: Boolean(row.isLocked),
+    };
+  }
+
+  private parseStoreProfileRow(row: any): StoreProfile {
+    return {
+      ...row,
+      isDefault: Boolean(row.isDefault),
+      categories: parseJsonField(row.categories, []),
+      overrides: parseJsonField(row.overrides, []),
+    };
+  }
+
+  private selectCardsByIds(cardIds: string[]): LogicalCard[] {
+    if (cardIds.length === 0) return [];
+    const placeholders = cardIds.map(() => '?').join(', ');
+    return (
+      this.db.prepare(`SELECT * FROM cards WHERE id IN (${placeholders})`).all(...cardIds) as any[]
+    ).map((row) => this.parseCardRow(row));
+  }
+
+  private selectPrintingsByIds(printingIds: string[]): CardPrinting[] {
+    if (printingIds.length === 0) return [];
+    const placeholders = printingIds.map(() => '?').join(', ');
+    return (
+      this.db.prepare(`SELECT * FROM printings WHERE id IN (${placeholders})`).all(...printingIds) as any[]
+    ).map((row) => this.parsePrintingRow(row));
+  }
+
+  getCollectionContext(): {
+    collectionItems: CollectionItem[];
+    cards: LogicalCard[];
+    printings: CardPrinting[];
+    decks: Deck[];
+    allocations: Allocation[];
+  } {
+    const collectionItems = this.db.prepare('SELECT * FROM collection_items').all() as CollectionItem[];
+    const decks = this.db.prepare('SELECT * FROM decks').all() as Deck[];
+    const allocations = (this.db.prepare('SELECT * FROM allocations').all() as any[]).map((row) =>
+      this.parseAllocationRow(row)
+    );
+    const cardIds = [...new Set(collectionItems.map((item) => item.cardId).filter(Boolean))];
+    const printingIds = [...new Set(collectionItems.map((item) => item.printingId).filter(Boolean))];
+
+    return {
+      collectionItems,
+      cards: this.selectCardsByIds(cardIds),
+      printings: this.selectPrintingsByIds(printingIds),
+      decks,
+      allocations,
+    };
+  }
+
+  getDeckContext(): {
+    decks: Deck[];
+    deckRequirements: DeckRequirement[];
+    collectionItems: CollectionItem[];
+    allocations: Allocation[];
+    cards: LogicalCard[];
+    printings: CardPrinting[];
+  } {
+    const decks = this.db.prepare('SELECT * FROM decks').all() as Deck[];
+    const deckRequirements = this.db.prepare('SELECT * FROM deck_requirements').all() as DeckRequirement[];
+    const collectionItems = this.db.prepare('SELECT * FROM collection_items').all() as CollectionItem[];
+    const allocations = (this.db.prepare('SELECT * FROM allocations').all() as any[]).map((row) =>
+      this.parseAllocationRow(row)
+    );
+    const cardIds = [...new Set(deckRequirements.map((req) => req.cardId).filter(Boolean))];
+    const cards = this.selectCardsByIds(cardIds);
+    const cardsById = new Map(cards.map((card) => [card.id, card]));
+    const printingIds = [
+      ...new Set(
+        deckRequirements
+          .map((req) => req.preferredPrintingId || cardsById.get(req.cardId)?.defaultPrintingId)
+          .filter((id): id is string => Boolean(id))
+      ),
+    ];
+
+    return {
+      decks,
+      deckRequirements,
+      collectionItems,
+      allocations,
+      cards,
+      printings: this.selectPrintingsByIds(printingIds),
+    };
+  }
+
+  getAllocationContext(): {
+    collectionItems: CollectionItem[];
+    decks: Deck[];
+    deckRequirements: DeckRequirement[];
+    allocations: Allocation[];
+  } {
+    const collectionItems = this.db.prepare('SELECT * FROM collection_items').all() as CollectionItem[];
+    const decks = this.db.prepare('SELECT * FROM decks').all() as Deck[];
+    const deckRequirements = this.db.prepare('SELECT * FROM deck_requirements').all() as DeckRequirement[];
+    const allocations = (this.db.prepare('SELECT * FROM allocations').all() as any[]).map((row) =>
+      this.parseAllocationRow(row)
+    );
+
+    return {
+      collectionItems,
+      decks,
+      deckRequirements,
+      allocations,
+    };
+  }
+
+  getCardById(cardId: string): LogicalCard | null {
+    const row = this.db.prepare('SELECT * FROM cards WHERE id = ?').get(cardId) as any | undefined;
+    return row ? this.parseCardRow(row) : null;
+  }
+
+  replaceCollectionItemsAndAllocations(
+    collectionItems: CollectionItem[],
+    allocations: Allocation[]
+  ): void {
+    const transaction = this.db.transaction(() => {
+      const incomingCollectionIds = new Set(collectionItems.map((item) => item.id));
+      const existingCollectionIds = (
+        this.db.prepare('SELECT id FROM collection_items').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteCollectionItem = this.db.prepare('DELETE FROM collection_items WHERE id = ?');
+      const upsertCollectionItem = this.db.prepare(`
+        INSERT INTO collection_items (id, cardId, printingId, quantity, condition, language, acquisitionSource, acquisitionDate, acquisitionCost, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          cardId = excluded.cardId,
+          printingId = excluded.printingId,
+          quantity = excluded.quantity,
+          condition = excluded.condition,
+          language = excluded.language,
+          acquisitionSource = excluded.acquisitionSource,
+          acquisitionDate = excluded.acquisitionDate,
+          acquisitionCost = excluded.acquisitionCost,
+          notes = excluded.notes
+      `);
+
+      for (const existingId of existingCollectionIds) {
+        if (!incomingCollectionIds.has(existingId)) {
+          deleteCollectionItem.run(existingId);
+        }
+      }
+
+      for (const item of collectionItems) {
+        upsertCollectionItem.run(
+          item.id,
+          item.cardId,
+          item.printingId,
+          item.quantity,
+          item.condition,
+          item.language,
+          item.acquisitionSource,
+          item.acquisitionDate,
+          item.acquisitionCost,
+          item.notes
+        );
+      }
+
+      const incomingAllocationIds = new Set(allocations.map((allocation) => allocation.id));
+      const existingAllocationIds = (
+        this.db.prepare('SELECT id FROM allocations').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteAllocation = this.db.prepare('DELETE FROM allocations WHERE id = ?');
+      const upsertAllocation = this.db.prepare(`
+        INSERT INTO allocations (id, deckId, collectionItemId, requirementId, quantity, isLocked)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          deckId = excluded.deckId,
+          collectionItemId = excluded.collectionItemId,
+          requirementId = excluded.requirementId,
+          quantity = excluded.quantity,
+          isLocked = excluded.isLocked
+      `);
+
+      for (const existingId of existingAllocationIds) {
+        if (!incomingAllocationIds.has(existingId)) {
+          deleteAllocation.run(existingId);
+        }
+      }
+
+      for (const allocation of allocations) {
+        upsertAllocation.run(
+          allocation.id,
+          allocation.deckId,
+          allocation.collectionItemId,
+          allocation.requirementId,
+          allocation.quantity,
+          allocation.isLocked ? 1 : 0
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  saveAcquisitionCollectionAndAllocations(
+    acquisition: StoredAcquisition,
+    collectionItems: CollectionItem[],
+    allocations: Allocation[]
+  ): void {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO acquisitions (id, cardId, printingId, quantity, source, method, costPerUnit, totalCost, date, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          cardId = excluded.cardId,
+          printingId = excluded.printingId,
+          quantity = excluded.quantity,
+          source = excluded.source,
+          method = excluded.method,
+          costPerUnit = excluded.costPerUnit,
+          totalCost = excluded.totalCost,
+          date = excluded.date,
+          notes = excluded.notes
+      `).run(
+        acquisition.id,
+        acquisition.cardId,
+        acquisition.printingId,
+        acquisition.quantity,
+        acquisition.source,
+        acquisition.method,
+        acquisition.costPerUnit,
+        acquisition.totalCost,
+        acquisition.date,
+        acquisition.notes
+      );
+
+      const incomingCollectionIds = new Set(collectionItems.map((item) => item.id));
+      const existingCollectionIds = (
+        this.db.prepare('SELECT id FROM collection_items').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteCollectionItem = this.db.prepare('DELETE FROM collection_items WHERE id = ?');
+      const upsertCollectionItem = this.db.prepare(`
+        INSERT INTO collection_items (id, cardId, printingId, quantity, condition, language, acquisitionSource, acquisitionDate, acquisitionCost, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          cardId = excluded.cardId,
+          printingId = excluded.printingId,
+          quantity = excluded.quantity,
+          condition = excluded.condition,
+          language = excluded.language,
+          acquisitionSource = excluded.acquisitionSource,
+          acquisitionDate = excluded.acquisitionDate,
+          acquisitionCost = excluded.acquisitionCost,
+          notes = excluded.notes
+      `);
+
+      for (const existingId of existingCollectionIds) {
+        if (!incomingCollectionIds.has(existingId)) {
+          deleteCollectionItem.run(existingId);
+        }
+      }
+
+      for (const item of collectionItems) {
+        upsertCollectionItem.run(
+          item.id,
+          item.cardId,
+          item.printingId,
+          item.quantity,
+          item.condition,
+          item.language,
+          item.acquisitionSource,
+          item.acquisitionDate,
+          item.acquisitionCost,
+          item.notes
+        );
+      }
+
+      const incomingAllocationIds = new Set(allocations.map((allocation) => allocation.id));
+      const existingAllocationIds = (
+        this.db.prepare('SELECT id FROM allocations').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteAllocation = this.db.prepare('DELETE FROM allocations WHERE id = ?');
+      const upsertAllocation = this.db.prepare(`
+        INSERT INTO allocations (id, deckId, collectionItemId, requirementId, quantity, isLocked)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          deckId = excluded.deckId,
+          collectionItemId = excluded.collectionItemId,
+          requirementId = excluded.requirementId,
+          quantity = excluded.quantity,
+          isLocked = excluded.isLocked
+      `);
+
+      for (const existingId of existingAllocationIds) {
+        if (!incomingAllocationIds.has(existingId)) {
+          deleteAllocation.run(existingId);
+        }
+      }
+
+      for (const allocation of allocations) {
+        upsertAllocation.run(
+          allocation.id,
+          allocation.deckId,
+          allocation.collectionItemId,
+          allocation.requirementId,
+          allocation.quantity,
+          allocation.isLocked ? 1 : 0
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  replaceAllocations(allocations: Allocation[]): void {
+    const transaction = this.db.transaction(() => {
+      const incomingIds = new Set(allocations.map((allocation) => allocation.id));
+      const existingIds = (
+        this.db.prepare('SELECT id FROM allocations').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteStmt = this.db.prepare('DELETE FROM allocations WHERE id = ?');
+      const upsertStmt = this.db.prepare(`
+        INSERT INTO allocations (id, deckId, collectionItemId, requirementId, quantity, isLocked)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          deckId = excluded.deckId,
+          collectionItemId = excluded.collectionItemId,
+          requirementId = excluded.requirementId,
+          quantity = excluded.quantity,
+          isLocked = excluded.isLocked
+      `);
+
+      for (const existingId of existingIds) {
+        if (!incomingIds.has(existingId)) {
+          deleteStmt.run(existingId);
+        }
+      }
+
+      for (const allocation of allocations) {
+        upsertStmt.run(
+          allocation.id,
+          allocation.deckId,
+          allocation.collectionItemId,
+          allocation.requirementId,
+          allocation.quantity,
+          allocation.isLocked ? 1 : 0
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  saveDeckWithRequirements(
+    deck: Deck,
+    requirements: DeckRequirement[] | undefined,
+    allocations: Allocation[]
+  ): void {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO decks (id, name, version, format, status, isPermanentlyAssembled, notes, updatedAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          version = excluded.version,
+          format = excluded.format,
+          status = excluded.status,
+          isPermanentlyAssembled = excluded.isPermanentlyAssembled,
+          notes = excluded.notes,
+          updatedAt = excluded.updatedAt
+      `).run(
+        deck.id,
+        deck.name,
+        deck.version,
+        deck.format,
+        deck.status,
+        deck.isPermanentlyAssembled ? 1 : 0,
+        deck.notes,
+        deck.updatedAt
+      );
+
+      if (requirements !== undefined) {
+        this.db.prepare('DELETE FROM deck_requirements WHERE deckId = ?').run(deck.id);
+        const insertRequirement = this.db.prepare(`
+          INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode)
+          VALUES (?, ?, ?, ?, ?)
+        `);
+        for (const requirement of requirements) {
+          insertRequirement.run(
+            requirement.id,
+            requirement.deckId,
+            requirement.cardId,
+            requirement.quantity,
+            requirement.requirementMode
+          );
+        }
+      }
+
+      const incomingIds = new Set(allocations.map((allocation) => allocation.id));
+      const existingIds = (
+        this.db.prepare('SELECT id FROM allocations').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteAllocation = this.db.prepare('DELETE FROM allocations WHERE id = ?');
+      const upsertAllocation = this.db.prepare(`
+        INSERT INTO allocations (id, deckId, collectionItemId, requirementId, quantity, isLocked)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          deckId = excluded.deckId,
+          collectionItemId = excluded.collectionItemId,
+          requirementId = excluded.requirementId,
+          quantity = excluded.quantity,
+          isLocked = excluded.isLocked
+      `);
+
+      for (const existingId of existingIds) {
+        if (!incomingIds.has(existingId)) {
+          deleteAllocation.run(existingId);
+        }
+      }
+
+      for (const allocation of allocations) {
+        upsertAllocation.run(
+          allocation.id,
+          allocation.deckId,
+          allocation.collectionItemId,
+          allocation.requirementId,
+          allocation.quantity,
+          allocation.isLocked ? 1 : 0
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  deleteDeckById(deckId: string): { deleted: boolean } {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM allocations WHERE deckId = ?').run(deckId);
+      this.db.prepare('DELETE FROM deck_requirements WHERE deckId = ?').run(deckId);
+      const result = this.db.prepare('DELETE FROM decks WHERE id = ?').run(deckId);
+      return result.changes > 0;
+    });
+
+    return { deleted: transaction() };
+  }
+
+  getStoreProfiles(): StoreProfile[] {
+    return (this.db.prepare('SELECT * FROM store_profiles').all() as any[]).map((row) =>
+      this.parseStoreProfileRow(row)
+    );
+  }
+
+  replaceStoreProfiles(storeProfiles: StoreProfile[]): void {
+    const transaction = this.db.transaction(() => {
+      const incomingIds = new Set(storeProfiles.map((profile) => profile.id));
+      const existingIds = (
+        this.db.prepare('SELECT id FROM store_profiles').all() as { id: string }[]
+      ).map((row) => row.id);
+      const deleteProfile = this.db.prepare('DELETE FROM store_profiles WHERE id = ?');
+      const upsertProfile = this.db.prepare(`
+        INSERT INTO store_profiles (id, name, isDefault, categories, overrides)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          isDefault = excluded.isDefault,
+          categories = excluded.categories,
+          overrides = excluded.overrides
+      `);
+
+      for (const existingId of existingIds) {
+        if (!incomingIds.has(existingId)) {
+          deleteProfile.run(existingId);
+        }
+      }
+
+      for (const profile of storeProfiles) {
+        upsertProfile.run(
+          profile.id,
+          profile.name,
+          profile.isDefault ? 1 : 0,
+          JSON.stringify(profile.categories || []),
+          JSON.stringify(profile.overrides || [])
+        );
+      }
+    });
+
+    transaction();
+  }
+
+  getCardsWithPrintings(limit?: number): LogicalCard[] {
+    const cardRows = (limit && limit > 0)
+      ? this.db.prepare('SELECT * FROM cards ORDER BY name COLLATE NOCASE LIMIT ?').all(limit) as any[]
+      : this.db.prepare('SELECT * FROM cards ORDER BY name COLLATE NOCASE').all() as any[];
+    const cards = cardRows.map((row) => this.parseCardRow(row));
+    if (cards.length === 0) return [];
+
+    const cardIds = cards.map((card) => card.id);
+    const placeholders = cardIds.map(() => '?').join(', ');
+    const printings = (
+      this.db
+        .prepare(`SELECT * FROM printings WHERE cardId IN (${placeholders}) ORDER BY setName COLLATE NOCASE, cardNumber`)
+        .all(...cardIds) as any[]
+    ).map((row) => this.parsePrintingRow(row));
+
+    return this.attachPrintings(cards, printings);
+  }
+
+  searchCardsWithPrintings(options: CardSearchOptions): { cards: LogicalCard[]; totalCount: number } {
+    const page = Math.max(1, Number(options.page || 1));
+    const pageSize = Math.max(1, Math.min(250, Number(options.pageSize || 30)));
+    const offset = (page - 1) * pageSize;
+    const normalizedQuery = normalizeSearchText(options.query || '');
+    const tokens = normalizedQuery ? normalizedQuery.split(/\s+/) : [];
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const normalizedCardNameSql = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(c.name, '''', ''), '’', ''), '"', ''), '#', ''))`;
+
+    if (options.supertype && options.supertype !== 'ALL') {
+      where.push('c.supertype = ?');
+      params.push(options.supertype);
+    }
+
+    if (options.setCode && options.setCode !== 'ALL') {
+      where.push('UPPER(p.setCode) = UPPER(?)');
+      params.push(options.setCode);
+    }
+
+    for (const token of tokens) {
+      const likeToken = `%${token}%`;
+      where.push(`
+        (
+          ${normalizedCardNameSql} LIKE ?
+          OR LOWER(c.supertype) LIKE ?
+          OR LOWER(c.subtype) LIKE ?
+          OR LOWER(COALESCE(c.types, '')) LIKE ?
+          OR LOWER(COALESCE(c.rules, '')) LIKE ?
+          OR LOWER(p.setCode) LIKE ?
+          OR LOWER(p.setName) LIKE ?
+          OR LOWER(REPLACE(p.cardNumber, '#', '')) = ?
+          OR LOWER(p.rarity) LIKE ?
+          OR LOWER(p.variant) LIKE ?
+          OR LOWER(COALESCE(p.artist, '')) LIKE ?
+        )
+      `);
+      params.push(
+        likeToken,
+        likeToken,
+        likeToken,
+        likeToken,
+        likeToken,
+        likeToken,
+        likeToken,
+        token,
+        likeToken,
+        likeToken,
+        likeToken
+      );
+    }
+
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const fromSql = 'FROM cards c LEFT JOIN printings p ON p.cardId = c.id';
+    const totalRow = this.db
+      .prepare(`SELECT COUNT(DISTINCT c.id) as count ${fromSql} ${whereSql}`)
+      .get(...params) as { count: number };
+    const orderParams: unknown[] = [];
+    const orderSql = tokens.length > 0
+      ? `
+        ORDER BY
+          CASE
+            WHEN ${normalizedCardNameSql} = ? THEN 0
+            WHEN ${normalizedCardNameSql} LIKE ? THEN 1
+            WHEN ${tokens.map(() => `${normalizedCardNameSql} LIKE ?`).join(' AND ')} THEN 2
+            ELSE 3
+          END,
+          c.name COLLATE NOCASE
+      `
+      : 'ORDER BY c.name COLLATE NOCASE';
+
+    if (tokens.length > 0) {
+      orderParams.push(normalizedQuery, `${normalizedQuery}%`, ...tokens.map((token) => `%${token}%`));
+    }
+
+    const idRows = this.db
+      .prepare(`
+        SELECT DISTINCT c.id, c.name
+        ${fromSql}
+        ${whereSql}
+        ${orderSql}
+        LIMIT ? OFFSET ?
+      `)
+      .all(...params, ...orderParams, pageSize, offset) as { id: string }[];
+
+    const cardIds = idRows.map((row) => row.id);
+    if (cardIds.length === 0) {
+      return { cards: [], totalCount: totalRow.count };
+    }
+
+    const placeholders = cardIds.map(() => '?').join(', ');
+    const cardRows = this.db
+      .prepare(`SELECT * FROM cards WHERE id IN (${placeholders})`)
+      .all(...cardIds) as any[];
+    const printings = (
+      this.db
+        .prepare(`SELECT * FROM printings WHERE cardId IN (${placeholders}) ORDER BY setName COLLATE NOCASE, cardNumber`)
+        .all(...cardIds) as any[]
+    ).map((row) => this.parsePrintingRow(row));
+
+    const cardById = new Map(cardRows.map((row) => [row.id, this.parseCardRow(row)]));
+    const orderedCards = cardIds
+      .map((id) => cardById.get(id))
+      .filter((card): card is LogicalCard => Boolean(card));
+
+    return {
+      cards: this.attachPrintings(orderedCards, printings),
+      totalCount: totalRow.count,
+    };
   }
 
   /**

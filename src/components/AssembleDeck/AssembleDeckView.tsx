@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { getAssemblePickList } from '../../services/api';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
+import { CardDetailModal } from '../CardDetailModal';
 
 interface AssembleDeckViewProps {
   decks: any[];
@@ -25,6 +26,7 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
   const [pickData, setPickData] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
 
   const activeDecks = decks.filter((d) => d.status === 'Active');
   const currentDeckId = selectedDeckId || activeDecks[0]?.id || decks[0]?.id;
@@ -46,6 +48,11 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
 
   const toggleCheck = (id: string) => {
     setCheckedItems((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const openCardDetail = (item: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setViewingCardModal({ card: item.card, printing: item.printing });
   };
 
   return (
@@ -134,19 +141,28 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
                         className="mt-1 w-4 h-4 rounded border-slate-300 text-indigo-700 focus:ring-indigo-500"
                       />
 
-                      <img
-                        src={getImageUrl(item.printing, item.card)}
-                        alt={item.card?.name}
-                        onError={handleImageError}
-                        className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0"
-                        referrerPolicy="no-referrer"
-                      />
+                      <button
+                        onClick={(e) => openCardDetail(item, e)}
+                        className="flex-shrink-0"
+                        title="Open card detail"
+                      >
+                        <img
+                          src={getImageUrl(item.printing, item.card)}
+                          alt={item.card?.name}
+                          onError={handleImageError}
+                          className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs hover:scale-105 transition-transform"
+                          referrerPolicy="no-referrer"
+                        />
+                      </button>
 
                       <div className="space-y-1">
                         <div className="flex items-center space-x-2">
-                          <span className={`font-bold text-sm ${isDone ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+                          <button
+                            onClick={(e) => openCardDetail(item, e)}
+                            className={`font-bold text-sm text-left transition ${isDone ? 'line-through text-slate-400' : 'text-slate-900 hover:text-indigo-700'}`}
+                          >
                             {item.requiredQty}x {item.card?.name}
-                          </span>
+                          </button>
                           <span className="text-[10px] px-2.5 py-0.5 bg-indigo-50 text-indigo-800 rounded-lg font-bold border border-indigo-100">
                             Box: {item.bulkCategory}
                           </span>
@@ -191,6 +207,15 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
+        />
       )}
     </div>
   );

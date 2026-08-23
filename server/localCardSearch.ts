@@ -25,6 +25,7 @@ export function normalizeText(text: string): string {
   return text
     .toLowerCase()
     .replace(/['''"`]/g, '') // remove quotes and apostrophes only
+    .replace(/#/g, '') // let searches like "#87" match card number "87"
     .replace(/\s+/g, ' ') // normalize multiple spaces to single space
     .trim();
 }
