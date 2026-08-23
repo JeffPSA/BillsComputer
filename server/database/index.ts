@@ -923,6 +923,15 @@ export class DatabaseManager {
     sets: CardSet[];
     rarities: string[];
     variants: string[];
+    setCompletion?: {
+      setCode: string;
+      setName: string;
+      totalPrintings: number;
+      ownedPrintings: number;
+      wishlistPrintings: number;
+      missingPrintings: number;
+      completionPercent: number;
+    };
     ownershipByPrintingId: Record<string, { ownedQuantity: number; wishlistQuantity: number }>;
   } {
     const page = Math.max(1, Number(options.page || 1));
@@ -1025,9 +1034,12 @@ export class DatabaseManager {
     const variants = (
       this.db.prepare('SELECT DISTINCT variant FROM printings WHERE variant IS NOT NULL AND variant != ? ORDER BY variant COLLATE NOCASE').all('') as { variant: string }[]
     ).map((row) => row.variant);
+    const setCompletion = options.setCode && options.setCode !== 'ALL'
+      ? this.getSetCompletion(options.setCode)
+      : undefined;
 
     if (printingIds.length === 0) {
-      return { cards: [], totalCount: totalRow.count, page, pageSize, sets, rarities, variants, ownershipByPrintingId: {} };
+      return { cards: [], totalCount: totalRow.count, page, pageSize, sets, rarities, variants, setCompletion, ownershipByPrintingId: {} };
     }
 
     const placeholders = printingIds.map(() => '?').join(', ');
@@ -1081,7 +1093,78 @@ export class DatabaseManager {
       sets,
       rarities,
       variants,
+      setCompletion,
       ownershipByPrintingId,
+    };
+  }
+
+  getSetCompletion(setCode: string): {
+    setCode: string;
+    setName: string;
+    totalPrintings: number;
+    ownedPrintings: number;
+    wishlistPrintings: number;
+    missingPrintings: number;
+    completionPercent: number;
+  } {
+    const normalizedSetCode = String(setCode || '').trim();
+    const setRow = this.db.prepare(`
+      SELECT id, name, ptcgoCode
+      FROM sets
+      WHERE UPPER(id) = UPPER(?) OR UPPER(COALESCE(ptcgoCode, '')) = UPPER(?)
+      LIMIT 1
+    `).get(normalizedSetCode, normalizedSetCode) as { id: string; name: string; ptcgoCode?: string } | undefined;
+    const candidateSetCodes = Array.from(new Set([
+      normalizedSetCode,
+      setRow?.id,
+      setRow?.ptcgoCode,
+    ].filter(Boolean) as string[]));
+    const countPrintingsForSet = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM printings
+      WHERE UPPER(setCode) = UPPER(?)
+    `);
+    let printingSetCode = normalizedSetCode;
+    let totalRow = countPrintingsForSet.get(printingSetCode) as { count: number };
+    for (const candidate of candidateSetCodes) {
+      const candidateRow = countPrintingsForSet.get(candidate) as { count: number };
+      if (candidateRow.count > totalRow.count) {
+        printingSetCode = candidate;
+        totalRow = candidateRow;
+      }
+    }
+    const printingSetNameRow = this.db.prepare(`
+      SELECT setName
+      FROM printings
+      WHERE UPPER(setCode) = UPPER(?)
+      LIMIT 1
+    `).get(printingSetCode) as { setName: string } | undefined;
+    const ownedRow = this.db.prepare(`
+      SELECT COUNT(DISTINCT p.id) as count
+      FROM printings p
+      JOIN collection_items ci ON ci.printingId = p.id AND ci.quantity > 0
+      WHERE UPPER(p.setCode) = UPPER(?)
+    `).get(printingSetCode) as { count: number };
+    const wishlistRow = this.db.prepare(`
+      SELECT COUNT(DISTINCT p.id) as count
+      FROM printings p
+      JOIN wishlist_items wi ON wi.printingId = p.id AND wi.quantity > 0
+      WHERE UPPER(p.setCode) = UPPER(?)
+    `).get(printingSetCode) as { count: number };
+    const totalPrintings = Number(totalRow.count || 0);
+    const ownedPrintings = Number(ownedRow.count || 0);
+    const wishlistPrintings = Number(wishlistRow.count || 0);
+    const missingPrintings = Math.max(0, totalPrintings - ownedPrintings);
+    const completionPercent = totalPrintings > 0 ? Math.round((ownedPrintings / totalPrintings) * 1000) / 10 : 0;
+
+    return {
+      setCode: printingSetCode,
+      setName: printingSetNameRow?.setName || setRow?.name || printingSetCode,
+      totalPrintings,
+      ownedPrintings,
+      wishlistPrintings,
+      missingPrintings,
+      completionPercent,
     };
   }
 

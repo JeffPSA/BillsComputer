@@ -187,24 +187,87 @@ function slugify(text: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+const FINISH_VARIANTS: Record<string, CardVariant> = {
+  normal: 'Normal',
+  holofoil: 'Holo',
+  reverseHolofoil: 'Reverse Holo',
+  '1stEditionHolofoil': '1st Edition Holo',
+  '1stEditionNormal': '1st Edition Normal',
+  unlimitedHolofoil: 'Unlimited Holo',
+  unlimitedNormal: 'Unlimited Normal',
+  cosmosHolofoil: 'Cosmo Holo',
+  cosmoHolofoil: 'Cosmo Holo',
+  promoHolofoil: 'Promo Holo',
+};
+
+const FINISH_PRIORITY = [
+  'holofoil',
+  'normal',
+  'reverseHolofoil',
+  'cosmosHolofoil',
+  'cosmoHolofoil',
+  'promoHolofoil',
+  'unlimitedHolofoil',
+  'unlimitedNormal',
+  '1stEditionHolofoil',
+  '1stEditionNormal',
+];
+
+function finishKeyToIdSuffix(finishKey: string): string {
+  return finishKey
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function finishKeyToVariant(finishKey: string): CardVariant {
+  if (FINISH_VARIANTS[finishKey]) {
+    return FINISH_VARIANTS[finishKey];
+  }
+
+  const spaced = finishKey
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/foil/gi, 'Holo')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/cosmo|cosmos/i.test(spaced)) return 'Cosmo Holo';
+  if (/reverse/i.test(spaced)) return 'Reverse Holo';
+  if (/promo/i.test(spaced)) return 'Promo Holo';
+  if (/holo/i.test(spaced)) return 'Holo';
+  return 'Normal';
+}
+
+function getPriceFromFinish(priceObj: any): number {
+  if (priceObj && typeof priceObj === 'object') {
+    return Number(priceObj.market || priceObj.mid || priceObj.low || 0.50);
+  }
+  return 0.50;
+}
+
+function inferPrimaryFinishKey(apiCard: any, availableFinishKeys: string[]): string {
+  if (availableFinishKeys.length === 0) return 'normal';
+  const inferredVariant = apiCard.rarity === 'ACE SPEC' || apiCard.rarity?.includes('Rare') ? 'Holo' : 'Normal';
+  const matchingKey = availableFinishKeys.find((key) => finishKeyToVariant(key) === inferredVariant);
+  if (matchingKey) return matchingKey;
+
+  return FINISH_PRIORITY.find((key) => availableFinishKeys.includes(key)) || availableFinishKeys[0];
+}
+
 /**
- * Maps a Pokemontcg.io raw API card object to LogicalCard and CardPrinting.
+ * Maps a Pokemontcg.io raw API card object to a LogicalCard and all local finish printings.
  */
-export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: LogicalCard; printing: CardPrinting } {
+export function transformApiCardToLogicalAndPrintings(apiCard: any): { card: LogicalCard; printings: CardPrinting[] } {
   const cardName = apiCard.name || 'Unknown Card';
   const slug = slugify(cardName);
   const cardId = `card_${slug}`;
-  const printingId = apiCard.id; // Canonical ID from Pokemontcg API (e.g., 'sv1-196', 'xy1-4', 'paf-137')
-
-  // Derive market price from TCGPlayer object if available
-  let marketPrice = 0.50;
-  if (apiCard.tcgplayer?.prices) {
-    const prices = apiCard.tcgplayer.prices;
-    const priceObj = prices.holofoil || prices.normal || prices.unlimitedHolofoil || prices.reverseHolofoil || prices['1stEditionHolofoil'] || Object.values(prices)[0];
-    if (priceObj && typeof priceObj === 'object') {
-      marketPrice = priceObj.market || priceObj.mid || priceObj.low || 0.50;
-    }
-  }
+  const canonicalPrintingId = apiCard.id; // Canonical ID from Pokemontcg API (e.g., 'sv1-196', 'xy1-4', 'paf-137')
+  const prices = apiCard.tcgplayer?.prices || {};
+  const availableFinishKeys = Object.keys(prices).filter((key) => prices[key] && typeof prices[key] === 'object');
+  const finishKeys = availableFinishKeys.length > 0 ? availableFinishKeys : ['normal'];
+  const primaryFinishKey = inferPrimaryFinishKey(apiCard, finishKeys);
+  const orderedFinishKeys = [primaryFinishKey, ...finishKeys.filter((finishKey) => finishKey !== primaryFinishKey)];
 
   // Subtype mapping
   const primarySubtype = (apiCard.subtypes && apiCard.subtypes.length > 0) ? apiCard.subtypes[0] : '';
@@ -247,31 +310,36 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
     expanded: apiCard.legalities?.expanded || false,
   };
 
-  const printing: CardPrinting = {
-    id: printingId,
-    cardId,
-    cardName,
-    setCode: apiCard.set?.ptcgoCode || apiCard.set?.id?.toUpperCase() || 'SVI',
-    setName: apiCard.set?.name || 'Scarlet & Violet',
-    cardNumber: apiCard.number || '1',
-    rarity: (apiCard.rarity as CardRarity) || 'Common',
-    variant: (apiCard.rarity === 'ACE SPEC' ? 'Holo' : (apiCard.rarity?.includes('Rare') ? 'Holo' : 'Normal')) as CardVariant,
-    language: 'English',
-    imageUrl,
-    marketPrice: Number(marketPrice.toFixed(2)),
-    // Extended fields
-    attacks,
-    abilities,
-    weaknesses,
-    resistances,
-    retreatCost: typeof apiCard.convertedRetreatCost === 'number' ? apiCard.convertedRetreatCost : undefined,
-    nationalPokedexNumbers: apiCard.nationalPokedexNumbers,
-    regulationMark: apiCard.regulationMark,
-    legalities,
-    artist: apiCard.artist,
-    imageUrlSmall: apiCard.images?.small,
-    imageUrlLarge: apiCard.images?.large,
-  };
+  const printings: CardPrinting[] = orderedFinishKeys.map((finishKey) => {
+    const isPrimaryFinish = finishKey === primaryFinishKey;
+    const marketPrice = getPriceFromFinish(prices[finishKey]);
+
+    return {
+      id: isPrimaryFinish ? canonicalPrintingId : `${canonicalPrintingId}__${finishKeyToIdSuffix(finishKey)}`,
+      cardId,
+      cardName,
+      setCode: apiCard.set?.ptcgoCode || apiCard.set?.id?.toUpperCase() || 'SVI',
+      setName: apiCard.set?.name || 'Scarlet & Violet',
+      cardNumber: apiCard.number || '1',
+      rarity: (apiCard.rarity as CardRarity) || 'Common',
+      variant: finishKeyToVariant(finishKey),
+      language: 'English',
+      imageUrl,
+      marketPrice: Number(marketPrice.toFixed(2)),
+      // Extended fields
+      attacks,
+      abilities,
+      weaknesses,
+      resistances,
+      retreatCost: typeof apiCard.convertedRetreatCost === 'number' ? apiCard.convertedRetreatCost : undefined,
+      nationalPokedexNumbers: apiCard.nationalPokedexNumbers,
+      regulationMark: apiCard.regulationMark,
+      legalities,
+      artist: apiCard.artist,
+      imageUrlSmall: apiCard.images?.small,
+      imageUrlLarge: apiCard.images?.large,
+    };
+  });
 
   const card: LogicalCard = {
     id: cardId,
@@ -282,11 +350,19 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
     types: apiCard.types || [],
     rules: apiCard.rules || [],
     isAceSpec: apiCard.rarity === 'ACE SPEC' || (apiCard.rules || []).some((r: string) => r.includes('ACE SPEC')),
-    defaultPrintingId: printingId,
-    printings: [printing],
+    defaultPrintingId: canonicalPrintingId,
+    printings,
   };
 
-  return { card, printing };
+  return { card, printings };
+}
+
+/**
+ * Backwards-compatible mapper for call sites that need a primary printing.
+ */
+export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: LogicalCard; printing: CardPrinting } {
+  const { card, printings } = transformApiCardToLogicalAndPrintings(apiCard);
+  return { card, printing: printings[0] };
 }
 
 /**
@@ -701,7 +777,7 @@ function processApiResponse(json: any, cacheKey: string, page: number, pageSize:
   const cardMap = new Map<string, { card: LogicalCard; printings: CardPrinting[] }>();
 
   for (const rawCard of rawCards) {
-    const { card, printing } = transformApiCardToLogicalAndPrinting(rawCard);
+    const { card, printings } = transformApiCardToLogicalAndPrintings(rawCard);
     if (!cardMap.has(card.id)) {
       cardMap.set(card.id, {
         card: { ...card, printings: [] },
@@ -709,9 +785,10 @@ function processApiResponse(json: any, cacheKey: string, page: number, pageSize:
       });
     }
     const existing = cardMap.get(card.id)!;
-    // Add printing if not already included
-    if (!existing.printings.some((p) => p.id === printing.id)) {
-      existing.printings.push(printing);
+    for (const printing of printings) {
+      if (!existing.printings.some((p) => p.id === printing.id)) {
+        existing.printings.push(printing);
+      }
     }
   }
 

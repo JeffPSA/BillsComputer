@@ -198,8 +198,9 @@ Notes:
 - Done: make Wishlist persistent in SQLite so browser-added targets appear on the Wishlist page.
 - Done: keep it SQLite-first and paginated so it does not slow the hosted server down.
 - Done: Browser now paginates exact stored printings instead of grouping all variants under one logical card.
-- Later: split Pokemon TCG API price finishes such as Normal, Holo, Reverse Holo, and promo/cosmo holo variants into separate SQLite printing rows during sync, so variants that share one API card ID can be collected separately.
-- Later: add master-set completion progress by set if/when needed.
+- Done: split Pokemon TCG API price finishes such as Normal, Holo, Reverse Holo, and recognized promo/cosmo holo price keys into separate SQLite printing rows during sync, while keeping the original API ID as the primary/default printing.
+- Done: add master-set completion progress by set in the Browser when a set filter is selected.
+- Later: refine promo/cosmo holo detection if real API examples expose extra finish keys outside the current mapping.
 
 ## Later: Home Dashboard Routine API Polish
 

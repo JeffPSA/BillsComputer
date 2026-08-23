@@ -29,6 +29,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
   const [sets, setSets] = useState<any[]>([]);
   const [rarities, setRarities] = useState<string[]>([]);
   const [variants, setVariants] = useState<string[]>([]);
+  const [setCompletion, setSetCompletion] = useState<any | null>(null);
   const [ownershipByPrintingId, setOwnershipByPrintingId] = useState<Record<string, { ownedQuantity: number; wishlistQuantity: number }>>({});
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -65,6 +66,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
         setSets(result.sets || []);
         setRarities(result.rarities || []);
         setVariants(result.variants || []);
+        setSetCompletion(result.setCompletion || null);
         setOwnershipByPrintingId(result.ownershipByPrintingId || {});
       } finally {
         if (!cancelled) setLoading(false);
@@ -219,6 +221,45 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
           </select>
         </div>
       </div>
+
+      {setCompletion && (
+        <div className="bg-white border border-slate-200 p-4 rounded-3xl shadow-sm space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Master Set Progress</div>
+              <div className="text-sm font-black text-slate-900">
+                {setCompletion.setName} ({setCompletion.setCode})
+              </div>
+            </div>
+            <div className="text-xl font-black text-indigo-700">
+              {setCompletion.completionPercent}%
+            </div>
+          </div>
+          <div className="h-3 bg-slate-100 border border-slate-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-yellow-400 transition-all"
+              style={{ width: `${Math.min(100, Math.max(0, setCompletion.completionPercent || 0))}%` }}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+              <div className="text-[9px] font-black uppercase text-slate-400">Owned</div>
+              <div className="text-sm font-black text-slate-900">{setCompletion.ownedPrintings}</div>
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+              <div className="text-[9px] font-black uppercase text-slate-400">Missing</div>
+              <div className="text-sm font-black text-rose-700">{setCompletion.missingPrintings}</div>
+            </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+              <div className="text-[9px] font-black uppercase text-slate-400">Wishlist</div>
+              <div className="text-sm font-black text-indigo-700">{setCompletion.wishlistPrintings}</div>
+            </div>
+          </div>
+          <div className="text-[10px] text-slate-500 font-bold text-center">
+            {setCompletion.ownedPrintings} of {setCompletion.totalPrintings} exact printings collected
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 text-xs font-bold text-slate-600">
         <button

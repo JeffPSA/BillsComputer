@@ -40,10 +40,16 @@ export type CardVariant =
   | 'Normal' 
   | 'Holo' 
   | 'Reverse Holo' 
+  | 'Cosmo Holo'
+  | '1st Edition Holo'
+  | '1st Edition Normal'
+  | 'Unlimited Holo'
+  | 'Unlimited Normal'
   | 'Full Art' 
   | 'Secret Rare' 
   | 'Gold' 
-  | 'Stamped Promo';
+  | 'Stamped Promo'
+  | 'Promo Holo';
 
 export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'Damaged';
 
