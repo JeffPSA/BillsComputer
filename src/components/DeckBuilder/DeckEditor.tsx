@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeft,
   Search,
@@ -8,7 +8,6 @@ import {
   Share2,
   Copy,
   Check,
-  PackageCheck,
   Layers,
   Sparkles,
   HelpCircle,
@@ -16,12 +15,15 @@ import {
   Compass,
   Settings,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Eye
 } from 'lucide-react';
 import { RequirementMode } from '../../types/tcg';
 import { searchCardsApi } from '../../services/api';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
 import { DeckSettingsModal } from './DeckSettingsModal';
+import { CardDetailModal } from '../CardDetailModal';
+import { formatZarFromUsd } from '../../utils/currency';
 
 interface DeckEditorProps {
   deck: any;
@@ -31,7 +33,6 @@ interface DeckEditorProps {
   onAddCardToDeck: (cardId: string, quantity: number) => void;
   onRemoveRequirement: (reqId: string) => void;
   onAutoAllocate: (deckId: string) => void;
-  onAssembleDeck: (deckId: string) => void;
   onHuntMissingCards?: (deckId: string) => void;
 }
 
@@ -42,15 +43,16 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
   onAddCardToDeck,
   onRemoveRequirement,
   onAutoAllocate,
-  onAssembleDeck,
   onHuntMissingCards,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const searchRequestId = useRef(0);
 
   const [selectedPrintingReq, setSelectedPrintingReq] = useState<any | null>(null);
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
   const [copiedText, setCopiedText] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
@@ -58,27 +60,37 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
 
   useEffect(() => {
     if (!searchQuery.trim()) {
+      searchRequestId.current += 1;
       setSearchResults([]);
       setSearchError(null);
       setIsSearching(false);
       return;
     }
 
+    const requestId = searchRequestId.current + 1;
+    searchRequestId.current = requestId;
+    const controller = new AbortController();
+
     setIsSearching(true);
     setSearchError(null);
 
     const timer = setTimeout(async () => {
-      const res = await searchCardsApi(searchQuery);
+      const res = await searchCardsApi(searchQuery, { signal: controller.signal });
+      if (requestId !== searchRequestId.current) return;
+
       setIsSearching(false);
       if (res.success) {
         setSearchResults(res.cards || []);
-      } else {
+      } else if (res.error !== 'Search cancelled') {
         setSearchResults([]);
         setSearchError(res.error || 'Failed to search cards');
       }
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchQuery]);
 
   const handleCopyLimitless = () => {
@@ -164,13 +176,6 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
             <span>{copiedText ? 'Copied!' : 'Copy Limitless Text'}</span>
           </button>
 
-          <button
-            onClick={() => onAssembleDeck(deck.id)}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-2xl shadow-md transition"
-          >
-            <PackageCheck className="w-4 h-4 stroke-[2.5]" />
-            <span>Assemble Deck Pick List</span>
-          </button>
         </div>
       </div>
 
@@ -216,26 +221,46 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
                   key={card.id}
                   className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 flex items-center space-x-3 hover:border-indigo-400 transition group"
                 >
-                  <img
-                    src={getImageUrl(defaultPrt, card)}
-                    alt={card.name}
-                    onError={handleImageError}
-                    className="w-9 h-12 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 group-hover:scale-105 transition-transform bg-white"
-                    referrerPolicy="no-referrer"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                    className="flex-shrink-0"
+                    title="View card"
+                  >
+                    <img
+                      src={getImageUrl(defaultPrt, card)}
+                      alt={card.name}
+                      onError={handleImageError}
+                      className="w-9 h-12 object-cover rounded-md border border-slate-200 shadow-xs group-hover:scale-105 transition-transform bg-white"
+                      referrerPolicy="no-referrer"
+                    />
+                  </button>
                   <div className="flex-1 min-w-0 space-y-0.5">
-                    <div className="text-xs font-bold text-slate-900 truncate">{card.name}</div>
+                    <button
+                      onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                      className="block w-full text-left text-xs font-bold text-slate-900 hover:text-indigo-700 truncate transition"
+                    >
+                      {card.name}
+                    </button>
                     <div className="text-[10px] text-slate-500 font-medium truncate">
                       {card.supertype} {card.subtype ? `• ${card.subtype}` : ''}
                     </div>
                     {defaultPrt && (
                       <div className="text-[10px] text-indigo-700 font-bold truncate">
-                        {defaultPrt.setCode} #{defaultPrt.cardNumber} • ${defaultPrt.marketPrice ? defaultPrt.marketPrice.toFixed(2) : '0.50'}
+                        {defaultPrt.setCode} #{defaultPrt.cardNumber} • {formatZarFromUsd(defaultPrt.marketPrice || 0.5)}
                       </div>
                     )}
                   </div>
 
                   <div className="flex flex-col space-y-1 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                      className="self-end p-1.5 bg-white hover:bg-slate-100 text-slate-600 hover:text-indigo-700 rounded-lg border border-slate-200 transition"
+                      title="View card"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                    </button>
                     <div className="flex items-center space-x-1">
                       {[1, 2, 4].map((qty) => (
                         <button
@@ -288,6 +313,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onUpdate={onUpdateDeckRequirement}
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
+          onOpenCardDetail={setViewingCardModal}
         />
 
         {/* Column 2: Trainer */}
@@ -298,6 +324,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onUpdate={onUpdateDeckRequirement}
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
+          onOpenCardDetail={setViewingCardModal}
         />
 
         {/* Column 3: Energy */}
@@ -308,6 +335,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onUpdate={onUpdateDeckRequirement}
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
+          onOpenCardDetail={setViewingCardModal}
         />
       </div>
 
@@ -343,6 +371,15 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           }}
         />
       )}
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
+        />
+      )}
     </div>
   );
 };
@@ -355,7 +392,8 @@ const DeckSection: React.FC<{
   onUpdate: (id: string, qty: number, mode?: RequirementMode, prtId?: string) => void;
   onRemove: (id: string) => void;
   onOpenPrintingModal: (reqItem: any) => void;
-}> = ({ title, count, items, onUpdate, onRemove, onOpenPrintingModal }) => {
+  onOpenCardDetail: (cardDetail: { card: any; printing?: any }) => void;
+}> = ({ title, count, items, onUpdate, onRemove, onOpenPrintingModal, onOpenCardDetail }) => {
   return (
     <div className="bg-white border border-slate-200 rounded-3xl p-5 space-y-3 shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -394,18 +432,29 @@ const DeckSection: React.FC<{
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center space-x-2.5">
-                  <img
-                    src={getImageUrl(prt, card)}
-                    alt={card?.name || 'Pokémon Card'}
-                    onError={handleImageError}
-                    className="w-8 h-11 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 bg-white"
-                    referrerPolicy="no-referrer"
-                  />
+                  <button
+                    onClick={() => onOpenCardDetail({ card, printing: prt })}
+                    className="flex-shrink-0"
+                    title="Open card detail"
+                  >
+                    <img
+                      src={getImageUrl(prt, card)}
+                      alt={card?.name || 'Pokémon Card'}
+                      onError={handleImageError}
+                      className="w-8 h-11 object-cover rounded-md border border-slate-200 shadow-xs bg-white hover:scale-105 transition-transform"
+                      referrerPolicy="no-referrer"
+                    />
+                  </button>
 
                   <div className="space-y-0.5">
                     <div className="flex items-center space-x-1.5">
                       <span>{badgeIcon}</span>
-                      <span className="font-bold text-xs text-slate-900">{card.name}</span>
+                      <button
+                        onClick={() => onOpenCardDetail({ card, printing: prt })}
+                        className="font-bold text-xs text-slate-900 hover:text-indigo-700 text-left transition"
+                      >
+                        {card.name}
+                      </button>
                     </div>
 
                     <button
@@ -522,7 +571,7 @@ const PrintingSelectorModal: React.FC<{
                 </div>
               </div>
               <span className="text-xs font-bold text-emerald-700">
-                ${prt.marketPrice?.toFixed(2)}
+                {formatZarFromUsd(prt.marketPrice || 0)}
               </span>
             </div>
           ))}

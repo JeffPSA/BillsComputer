@@ -12,18 +12,7 @@ export const ImportLimitlessModal: React.FC<ImportLimitlessModalProps> = ({
   onImportSuccess,
 }) => {
   const [deckName, setDeckName] = useState('Imported Limitless Deck');
-  const [deckText, setDeckText] = useState(`4 Ultra Ball SVI 196
-4 Nest Ball SVI 181
-2 Boss's Orders PAL 172
-3 Iono PAL 185
-3 Dragapult ex TWM 130
-3 Drakloak TWM 129
-2 Earthen Vessel PAR 163
-1 Prime Catcher TEF 157
-1 Fezandipiti ex SFT 038
-1 Radiant Greninja ASR 046
-6 Basic Fire Energy
-4 Basic Grass Energy`);
+  const [deckText, setDeckText] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -86,7 +75,7 @@ export const ImportLimitlessModal: React.FC<ImportLimitlessModalProps> = ({
               rows={8}
               value={deckText}
               onChange={(e) => setDeckText(e.target.value)}
-              placeholder="Paste decklist (e.g. 4 Ultra Ball SVI 196)..."
+              placeholder="Paste a Limitless decklist here..."
               className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-mono text-indigo-950 focus:outline-none focus:ring-4 focus:ring-indigo-100 font-bold"
             />
           </div>

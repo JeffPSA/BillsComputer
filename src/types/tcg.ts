@@ -40,10 +40,16 @@ export type CardVariant =
   | 'Normal' 
   | 'Holo' 
   | 'Reverse Holo' 
+  | 'Cosmo Holo'
+  | '1st Edition Holo'
+  | '1st Edition Normal'
+  | 'Unlimited Holo'
+  | 'Unlimited Normal'
   | 'Full Art' 
   | 'Secret Rare' 
   | 'Gold' 
-  | 'Stamped Promo';
+  | 'Stamped Promo'
+  | 'Promo Holo';
 
 export type Condition = 'NM' | 'LP' | 'MP' | 'HP' | 'Damaged';
 
@@ -252,7 +258,7 @@ export interface CalculatedCardOwnership {
 
 export interface MarketplaceListing {
   id: string;
-  marketplace: 'TCGPlayer' | 'eBay' | "BOB's Shop" | 'PokeBulk' | 'Local Game Store';
+  marketplace: 'TCGPlayer' | 'eBay' | 'Pokeverse' | 'PokeBulk' | 'Bob Shop' | 'Local Game Store';
   cardName: string;
   printingString: string;
   sellerName: string;

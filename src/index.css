@@ -1,1 +1,181 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  background: #0f1117;
+}
+
+:root[data-theme='dark'] body {
+  background: #0f1117;
+}
+
+.dark-theme {
+  background: #0f1117 !important;
+  color: #f4f6fb !important;
+}
+
+.dark-theme :is(.bg-white, .bg-slate-50, .bg-gray-50) {
+  background-color: #171b24 !important;
+}
+
+.dark-theme :is(.bg-slate-100, .bg-gray-100, .bg-indigo-50) {
+  background-color: #202635 !important;
+}
+
+.dark-theme :is(.bg-slate-200, .bg-gray-200, .bg-indigo-100) {
+  background-color: #2b3344 !important;
+}
+
+.dark-theme :is(.bg-slate-900, .bg-indigo-950) {
+  background-color: #090b10 !important;
+}
+
+.dark-theme :is(.bg-red-50, .bg-rose-50) {
+  background-color: #3a1820 !important;
+}
+
+.dark-theme :is(.bg-emerald-50, .bg-emerald-100) {
+  background-color: #113326 !important;
+}
+
+.dark-theme :is(.bg-amber-50, .bg-amber-100, .bg-yellow-100) {
+  background-color: #3a2a12 !important;
+}
+
+.dark-theme :is(.bg-blue-100, .bg-sky-100) {
+  background-color: #17324b !important;
+}
+
+.dark-theme :is(.bg-purple-100, .bg-violet-100, .bg-pink-100) {
+  background-color: #321f46 !important;
+}
+
+.dark-theme :is(.bg-orange-100) {
+  background-color: #442512 !important;
+}
+
+.dark-theme :is(.border-slate-100, .border-slate-200, .border-slate-300, .border-gray-200, .border-indigo-100, .border-indigo-200) {
+  border-color: #343b4d !important;
+}
+
+.dark-theme :is(.border-indigo-400, .border-indigo-500) {
+  border-color: #6672b8 !important;
+}
+
+.dark-theme :is(.divide-slate-100, .divide-slate-200) > :not([hidden]) ~ :not([hidden]) {
+  border-color: #2b3344 !important;
+}
+
+.dark-theme :is(.text-slate-950, .text-slate-900, .text-gray-900, .text-indigo-950) {
+  color: #f4f6fb !important;
+}
+
+.dark-theme :is(.text-slate-800, .text-slate-700, .text-gray-700, .text-indigo-900, .text-indigo-800, .text-indigo-700) {
+  color: #d8defd !important;
+}
+
+.dark-theme :is(.text-slate-600, .text-slate-500, .text-gray-500, .text-indigo-600, .text-indigo-500) {
+  color: #aeb8cc !important;
+}
+
+.dark-theme :is(.text-slate-400, .text-gray-400) {
+  color: #7f8aa0 !important;
+}
+
+.dark-theme :is(.text-emerald-950, .text-emerald-900, .text-emerald-800, .text-emerald-700) {
+  color: #7ee0b5 !important;
+}
+
+.dark-theme :is(.text-amber-900, .text-amber-800, .text-amber-700, .text-yellow-800) {
+  color: #f7cf73 !important;
+}
+
+.dark-theme :is(.text-red-900, .text-red-800, .text-red-700, .text-red-600, .text-rose-800, .text-rose-700) {
+  color: #ff9aab !important;
+}
+
+.dark-theme :is(.text-blue-800, .text-sky-800) {
+  color: #93cfff !important;
+}
+
+.dark-theme :is(.text-purple-800, .text-violet-800, .text-pink-800) {
+  color: #d8b4fe !important;
+}
+
+.dark-theme :is(.text-orange-800) {
+  color: #fdba74 !important;
+}
+
+.dark-theme :is(input, select, textarea) {
+  background-color: #111722 !important;
+  border-color: #343b4d !important;
+  color: #f4f6fb !important;
+}
+
+.dark-theme :is(input, textarea)::placeholder {
+  color: #7f8aa0 !important;
+}
+
+.dark-theme :is(table, thead, tbody, tr, th, td) {
+  border-color: #2b3344 !important;
+}
+
+.dark-theme :is(.shadow-sm, .shadow-md, .shadow-lg, .shadow-xl, .shadow-2xl) {
+  --tw-shadow-color: rgb(0 0 0 / 0.45) !important;
+}
+
+.dark-theme .bg-yellow-400.text-indigo-950,
+.dark-theme .hover\:bg-yellow-300:hover {
+  color: #1e1b4b !important;
+}
+
+.dark-theme .bg-white\/10,
+.dark-theme .hover\:bg-white\/20:hover {
+  background-color: rgb(255 255 255 / 0.1) !important;
+}
+
+.dark-theme :is(.hover\:bg-slate-50:hover, .hover\:bg-gray-50:hover, .hover\:bg-indigo-50:hover, .hover\:bg-indigo-50\/50:hover) {
+  background-color: #222a3a !important;
+}
+
+.dark-theme :is(.hover\:bg-slate-100:hover, .hover\:bg-gray-100:hover, .hover\:bg-indigo-100:hover) {
+  background-color: #2b3344 !important;
+}
+
+.dark-theme :is(.hover\:text-slate-900:hover, .hover\:text-gray-900:hover, .hover\:text-indigo-950:hover, .hover\:text-indigo-700:hover) {
+  color: #ffffff !important;
+}
+
+.dark-theme :is(.focus\:ring-indigo-100:focus, .focus\:ring-indigo-200:focus) {
+  --tw-ring-color: rgb(129 140 248 / 0.28) !important;
+}
+
+.dark-theme .ring-indigo-200 {
+  --tw-ring-color: rgb(129 140 248 / 0.34) !important;
+}
+
+.allocation-danger-action {
+  background-color: #ffe4e6 !important;
+  border-color: #fb7185 !important;
+  color: #7f1d1d !important;
+}
+
+.allocation-danger-action:hover {
+  background-color: #fecdd3 !important;
+  color: #7f1d1d !important;
+}
+
+.dark-theme .allocation-danger-action {
+  background-color: #ffe4e6 !important;
+  border-color: #fb7185 !important;
+  color: #7f1d1d !important;
+}
+
+.dark-theme .allocation-danger-action:hover {
+  background-color: #fecdd3 !important;
+  color: #7f1d1d !important;
+}

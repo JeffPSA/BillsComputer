@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Search, Plus, Check, Loader2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Search, Loader2, AlertCircle, Eye } from 'lucide-react';
 import { updateCollectionItem, searchCardsApi } from '../services/api';
 import { getImageUrl, handleImageError } from '../utils/imageUtils';
+import { CardDetailModal } from './CardDetailModal';
+import { formatZarFromUsd, usdToZar } from '../utils/currency';
 
 interface QuickAddCollectionModalProps {
   allCards: any[];
@@ -17,38 +19,50 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const searchRequestId = useRef(0);
 
   const [selectedCard, setSelectedCard] = useState<any | null>(null);
   const [selectedPrintingId, setSelectedPrintingId] = useState<string>('');
+  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [condition, setCondition] = useState('NM');
   const [source, setSource] = useState('Local Game Store Single');
-  const [cost, setCost] = useState('1.00');
+  const [cost, setCost] = useState(usdToZar(1).toFixed(2));
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!searchQuery.trim()) {
+      searchRequestId.current += 1;
       setSearchResults([]);
       setSearchError(null);
       setIsSearching(false);
       return;
     }
 
+    const requestId = searchRequestId.current + 1;
+    searchRequestId.current = requestId;
+    const controller = new AbortController();
+
     setIsSearching(true);
     setSearchError(null);
 
     const timer = setTimeout(async () => {
-      const res = await searchCardsApi(searchQuery);
+      const res = await searchCardsApi(searchQuery, { signal: controller.signal });
+      if (requestId !== searchRequestId.current) return;
+
       setIsSearching(false);
       if (res.success) {
         setSearchResults(res.cards || []);
-      } else {
+      } else if (res.error !== 'Search cancelled') {
         setSearchResults([]);
         setSearchError(res.error || 'Failed to search cards');
       }
     }, 300);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchQuery]);
 
   const handleSelectCard = (card: any) => {
@@ -57,7 +71,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
     if (printings.length > 0) {
       setSelectedPrintingId(printings[0].id);
       if (printings[0].marketPrice) {
-        setCost(printings[0].marketPrice.toFixed(2));
+        setCost(usdToZar(printings[0].marketPrice).toFixed(2));
       }
     } else {
       setSelectedPrintingId(card.defaultPrintingId || '');
@@ -136,25 +150,35 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
                 return (
                   <div
                     key={card.id}
-                    onClick={() => handleSelectCard(card)}
-                    className="bg-slate-50 hover:bg-indigo-50/50 p-3 rounded-2xl border border-slate-200 hover:border-indigo-400 cursor-pointer transition flex items-center space-x-3 group"
+                    className="bg-slate-50 hover:bg-indigo-50/50 p-3 rounded-2xl border border-slate-200 hover:border-indigo-400 transition flex items-center space-x-3 group"
                   >
-                    <img
-                      src={getImageUrl(defaultPrt, card)}
-                      alt={card.name}
-                      onError={handleImageError}
-                      className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs flex-shrink-0 group-hover:scale-105 transition-transform bg-slate-100"
-                      referrerPolicy="no-referrer"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                      className="flex-shrink-0"
+                      title="View card"
+                    >
+                      <img
+                        src={getImageUrl(defaultPrt, card)}
+                        alt={card.name}
+                        onError={handleImageError}
+                        className="w-10 h-14 object-cover rounded-md border border-slate-200 shadow-xs group-hover:scale-105 transition-transform bg-slate-100"
+                        referrerPolicy="no-referrer"
+                      />
+                    </button>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-950 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                        className="w-full text-xs font-bold text-slate-900 group-hover:text-indigo-950 hover:text-indigo-700 flex items-center justify-between text-left transition"
+                      >
                         <span className="truncate">{card.name}</span>
                         {defaultPrt?.marketPrice && (
                           <span className="text-emerald-700 font-black text-[11px] ml-2">
-                            ${defaultPrt.marketPrice.toFixed(2)}
+                            {formatZarFromUsd(defaultPrt.marketPrice)}
                           </span>
                         )}
-                      </div>
+                      </button>
                       <div className="text-[10px] text-slate-500 font-medium flex items-center space-x-2 mt-0.5">
                         <span className="px-1.5 py-0.5 bg-slate-200 rounded text-slate-700 font-bold">
                           {card.supertype}
@@ -172,12 +196,28 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
                         </div>
                       )}
                     </div>
-                    <span className="text-xs text-indigo-700 font-black flex-shrink-0">Select →</span>
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setViewingCardModal({ card, printing: defaultPrt })}
+                        className="p-1.5 bg-white hover:bg-slate-100 text-slate-600 hover:text-indigo-700 rounded-lg border border-slate-200 transition"
+                        title="View card"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectCard(card)}
+                        className="text-xs text-indigo-700 hover:text-indigo-900 font-black"
+                      >
+                        Select →
+                      </button>
+                    </div>
                   </div>
                 );
               })}
 
-              {searchQuery && searchResults.length === 0 && (
+              {!isSearching && searchQuery.trim() && searchResults.length === 0 && !searchError && (
                 <div className="py-8 text-center text-xs text-slate-400 italic">
                   No cards found matching "{searchQuery}".
                 </div>
@@ -221,13 +261,13 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
                   onChange={(e) => {
                     setSelectedPrintingId(e.target.value);
                     const prt = selectedCard.printings.find((p: any) => p.id === e.target.value);
-                    if (prt?.marketPrice) setCost(prt.marketPrice.toFixed(2));
+                    if (prt?.marketPrice) setCost(usdToZar(prt.marketPrice).toFixed(2));
                   }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:outline-none focus:ring-4 focus:ring-indigo-100"
                 >
                   {selectedCard.printings.map((p: any) => (
                     <option key={p.id} value={p.id}>
-                      {p.setName} ({p.setCode} #{p.cardNumber}) - {p.rarity || 'Normal'} (${(p.marketPrice || 1.0).toFixed(2)})
+                      {p.setName} ({p.setCode} #{p.cardNumber}) - {p.rarity || 'Normal'} ({formatZarFromUsd(p.marketPrice || 1.0)})
                     </option>
                   ))}
                 </select>
@@ -271,7 +311,7 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold uppercase text-slate-700">Cost per unit ($):</label>
+                <label className="text-xs font-bold uppercase text-slate-700">Cost per unit (ZAR):</label>
                 <input
                   type="text"
                   value={cost}
@@ -300,7 +340,15 @@ export const QuickAddCollectionModal: React.FC<QuickAddCollectionModalProps> = (
           </form>
         )}
       </div>
+
+      {viewingCardModal && (
+        <CardDetailModal
+          card={viewingCardModal.card}
+          printing={viewingCardModal.printing}
+          allPrintings={viewingCardModal.card.printings}
+          onClose={() => setViewingCardModal(null)}
+        />
+      )}
     </div>
   );
 };
-

@@ -12,11 +12,16 @@ import {
   Tag,
   Check,
   Eye
+  , Grid3X3
+  , List
+  , ZoomIn
+  , ZoomOut
 } from 'lucide-react';
 import { Condition } from '../../types/tcg';
 import { CardDetailModal } from '../CardDetailModal';
 import { searchCards } from '../../services/cardSearch';
 import { getImageUrl, handleImageError } from '../../utils/imageUtils';
+import { formatZarFromUsd } from '../../utils/currency';
 
 interface CollectionManagerProps {
   collection: any[];
@@ -34,6 +39,8 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [supertypeFilter, setSupertypeFilter] = useState('ALL');
   const [availabilityFilter, setAvailabilityFilter] = useState('ALL');
+  const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
+  const [cardZoom, setCardZoom] = useState<0 | 1 | 2>(1);
   const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
 
   // Metrics
@@ -60,6 +67,56 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
 
     return matchesSearch && matchesAvail;
   });
+
+  const gridImageClasses = [
+    'h-52',
+    'h-64',
+    'h-80',
+  ][cardZoom];
+
+  const gridColumnsClass = [
+    'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5',
+    'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4',
+    'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+  ][cardZoom];
+
+  const decreaseItemQuantity = (item: any) => {
+    const newQuantity = item.quantity - 1;
+    if (newQuantity < item.allocatedQuantity) {
+      alert(`Cannot decrease below ${item.allocatedQuantity} allocated copies. Release allocations first.`);
+      return;
+    }
+    onUpdateItem({
+      id: item.id,
+      cardId: item.cardId || item.card?.id,
+      printingId: item.printingId || item.printing?.id,
+      quantity: Math.max(0, newQuantity),
+    });
+  };
+
+  const increaseItemQuantity = (item: any) => {
+    onUpdateItem({
+      id: item.id,
+      cardId: item.cardId || item.card?.id,
+      printingId: item.printingId || item.printing?.id,
+      quantity: item.quantity + 1,
+    });
+  };
+
+  const deleteItem = (item: any) => {
+    if (item.allocatedQuantity > 0) {
+      const deckNames = item.allocatedDetails?.map((a: any) => a.deckName).join(', ') || 'decks';
+      alert(`This card is currently allocated to ${deckNames} and cannot be removed until released.`);
+      return;
+    }
+    if (window.confirm(`Delete ${item.card?.name || 'this card'} from collection?`)) {
+      onUpdateItem({
+        id: item.id,
+        cardId: item.cardId || item.card?.id,
+        quantity: 0,
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -100,7 +157,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
         </div>
         <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
           <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">ESTIMATED MARKET VALUE</div>
-          <div className="text-2xl font-black text-amber-600">${totalEstimatedValue.toFixed(2)}</div>
+          <div className="text-2xl font-black text-amber-600">{formatZarFromUsd(totalEstimatedValue)}</div>
         </div>
       </div>
 
@@ -139,9 +196,146 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
             <option value="ALLOCATED_ONLY">Allocated Only</option>
           </select>
         </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center bg-slate-100 border border-slate-200 rounded-2xl p-1">
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-2 rounded-xl transition ${viewMode === 'table' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+              title="Table view"
+            >
+              <List className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-2 rounded-xl transition ${viewMode === 'grid' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
+              title="Grid view"
+            >
+              <Grid3X3 className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center bg-slate-100 border border-slate-200 rounded-2xl p-1">
+            <button
+              onClick={() => setCardZoom((z) => Math.max(0, z - 1) as 0 | 1 | 2)}
+              disabled={cardZoom === 0}
+              className="p-2 rounded-xl text-slate-500 hover:text-slate-900 disabled:opacity-40 transition"
+              title="Zoom out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setCardZoom((z) => Math.min(2, z + 1) as 0 | 1 | 2)}
+              disabled={cardZoom === 2}
+              className="p-2 rounded-xl text-slate-500 hover:text-slate-900 disabled:opacity-40 transition"
+              title="Zoom in"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       </div>
 
+      {viewMode === 'grid' && (
+        <div className={`grid ${gridColumnsClass} gap-4`}>
+          {filteredCollection.map((item) => {
+            const card = item.card;
+            const prt = item.printing;
+
+            return (
+              <div
+                key={item.id}
+                className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:border-indigo-300 transition"
+              >
+                <button
+                  onClick={() => card && setViewingCardModal({ card, printing: prt })}
+                  className="block w-full bg-slate-100"
+                  title="Open card detail"
+                >
+                  <img
+                    src={getImageUrl(prt, card)}
+                    alt={card?.name || 'Pokémon Card'}
+                    onError={handleImageError}
+                    className={`w-full ${gridImageClasses} object-contain bg-slate-100 transition`}
+                    referrerPolicy="no-referrer"
+                  />
+                </button>
+
+                <div className="p-3.5 space-y-3">
+                  <div className="space-y-1 min-h-14">
+                    <button
+                      onClick={() => card && setViewingCardModal({ card, printing: prt })}
+                      className="text-left font-black text-sm text-slate-900 hover:text-indigo-700 transition line-clamp-2"
+                    >
+                      {card?.name || 'Unknown Card'}
+                    </button>
+                    <div className="text-[10px] text-indigo-700 font-bold">
+                      {prt ? `${prt.setCode} #${prt.cardNumber} • ${prt.rarity}` : 'Default Printing'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">Owned</div>
+                      <div className="text-sm font-black text-slate-900">{item.quantity}</div>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">Alloc</div>
+                      <div className="text-sm font-black text-indigo-700">{item.allocatedQuantity}</div>
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">Free</div>
+                      <div className="text-sm font-black text-emerald-700">{item.availableQuantity}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs font-black text-amber-700">
+                      {formatZarFromUsd((prt?.marketPrice || 0) * item.quantity)}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => decreaseItemQuantity(item)}
+                        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition"
+                        title="Decrease quantity"
+                      >
+                        <Minus className="w-3 h-3 stroke-[2.5]" />
+                      </button>
+                      <button
+                        onClick={() => increaseItemQuantity(item)}
+                        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition"
+                        title="Increase quantity"
+                      >
+                        <Plus className="w-3 h-3 stroke-[2.5]" />
+                      </button>
+                      <button
+                        onClick={() => deleteItem(item)}
+                        className={`p-1.5 rounded-lg border transition ${
+                          item.allocatedQuantity > 0
+                            ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed'
+                            : 'bg-slate-100 hover:bg-rose-600 hover:text-white text-slate-500 border-slate-200'
+                        }`}
+                        title={item.allocatedQuantity > 0 ? 'Cannot delete allocated card' : 'Delete item'}
+                      >
+                        <Trash2 className="w-3 h-3 stroke-[2.5]" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {filteredCollection.length === 0 && (
+            <div className="col-span-full bg-white border border-slate-200 p-8 rounded-3xl text-center text-slate-400 italic">
+              No physical cards match your search filter.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Collection Table */}
+      {viewMode === 'table' && (
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -220,59 +414,27 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 font-bold text-slate-800">
-                      ${prt?.marketPrice ? (prt.marketPrice * item.quantity).toFixed(2) : '0.00'}
+                      {formatZarFromUsd((prt?.marketPrice || 0) * item.quantity)}
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end space-x-1">
                         <button
-                          onClick={() => {
-                            const newQuantity = item.quantity - 1;
-                            if (newQuantity < item.allocatedQuantity) {
-                              alert(`Cannot decrease below ${item.allocatedQuantity} allocated copies. Release allocations first.`);
-                              return;
-                            }
-                            onUpdateItem({
-                              id: item.id,
-                              cardId: item.cardId || card?.id,
-                              printingId: item.printingId || prt?.id,
-                              quantity: Math.max(0, newQuantity),
-                            });
-                          }}
+                          onClick={() => decreaseItemQuantity(item)}
                           className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition"
                           title="Decrease Quantity"
                         >
                           <Minus className="w-3 h-3 stroke-[2.5]" />
                         </button>
                         <button
-                          onClick={() =>
-                            onUpdateItem({
-                              id: item.id,
-                              cardId: item.cardId || card?.id,
-                              printingId: item.printingId || prt?.id,
-                              quantity: item.quantity + 1,
-                            })
-                          }
+                          onClick={() => increaseItemQuantity(item)}
                           className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg border border-slate-200 transition"
                           title="Increase Quantity"
                         >
                           <Plus className="w-3 h-3 stroke-[2.5]" />
                         </button>
                         <button
-                          onClick={() => {
-                            if (item.allocatedQuantity > 0) {
-                              const deckNames = item.allocatedDetails?.map((a: any) => a.deckName).join(', ') || 'decks';
-                              alert(`This card is currently allocated to ${deckNames} and cannot be removed until released.`);
-                              return;
-                            }
-                            if (window.confirm(`Delete ${card?.name || 'this card'} from collection?`)) {
-                              onUpdateItem({
-                                id: item.id,
-                                cardId: item.cardId || card?.id,
-                                quantity: 0,
-                              });
-                            }
-                          }}
+                          onClick={() => deleteItem(item)}
                           className={`p-1.5 rounded-lg border transition ${
                             item.allocatedQuantity > 0
                               ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed'
@@ -299,6 +461,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
           </table>
         </div>
       </div>
+      )}
 
       {viewingCardModal && (
         <CardDetailModal

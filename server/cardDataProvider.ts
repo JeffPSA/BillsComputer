@@ -13,10 +13,15 @@ interface CacheEntry<T> {
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
 const FAILURE_CACHE_TTL_MS = 30 * 1000; // 30 seconds for failures to prevent retry storms
+const API_TIMEOUT_MS = 15000;
+const MAX_TRANSIENT_ATTEMPTS = 4;
 const searchCache = new Map<string, CacheEntry<{ cards: LogicalCard[]; totalCount: number; page: number; pageSize: number }>>();
 const cardByIdCache = new Map<string, CacheEntry<{ card: LogicalCard; printing: CardPrinting }>>();
 const setsCache = new Map<string, CacheEntry<{ sets: PokemonTcgSet[] }>>();
 const failureCache = new Map<string, { timestamp: number; error: string }>();
+const KNOWN_SET_CODE_ALIASES: Record<string, string> = {
+  pfl: 'me2',
+};
 
 // Rate limiting to respect Pokémon TCG API limits (30/minute without key, higher with key)
 const lastRequestTime = new Map<string, number>();
@@ -72,35 +77,58 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
     return cached.data.sets;
   }
 
-  try {
+  for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt++) {
     await rateLimit('fetchSets');
     const apiUrl = `${POKEMON_TCG_API_BASE}/sets`;
     console.log(`[CardDataProvider] Fetching sets: ${apiUrl}`);
-    
-    const res = await fetch(apiUrl, {
-      headers: getApiHeaders(),
-      signal: AbortSignal.timeout(10000),
-    });
 
-    if (!res.ok) {
-      console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status}`);
+    try {
+      const res = await fetch(apiUrl, {
+        headers: getApiHeaders(),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+
+      if (!res.ok) {
+        if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+          if (attempt === MAX_TRANSIENT_ATTEMPTS) {
+            console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status} after ${attempt} attempts`);
+            return [];
+          }
+
+          const delay = getRetryDelayMs(attempt, res.headers.get('Retry-After'));
+          console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status} - retrying in ${delay}ms (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status}`);
+        return [];
+      }
+
+      const json = await res.json();
+      const sets: PokemonTcgSet[] = json.data || [];
+    
+      setsCache.set(cacheKey, {
+        data: { sets },
+        timestamp: Date.now(),
+      });
+    
+      console.log(`[CardDataProvider] Cached ${sets.length} sets`);
+      return sets;
+    } catch (err: any) {
+      if (isTransientFetchError(err) && attempt < MAX_TRANSIENT_ATTEMPTS) {
+        const delay = getRetryDelayMs(attempt);
+        console.warn(`[CardDataProvider] Failed to fetch sets: ${err.message || err.name} - retrying in ${delay}ms (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+
+      console.error('[CardDataProvider] Failed to fetch sets:', err);
       return [];
     }
-
-    const json = await res.json();
-    const sets: PokemonTcgSet[] = json.data || [];
-    
-    setsCache.set(cacheKey, {
-      data: { sets },
-      timestamp: Date.now(),
-    });
-    
-    console.log(`[CardDataProvider] Cached ${sets.length} sets`);
-    return sets;
-  } catch (err: any) {
-    console.error('[CardDataProvider] Failed to fetch sets:', err);
-    return [];
   }
+
+  return [];
 }
 
 /**
@@ -108,31 +136,41 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
  * Enhanced to handle common set codes like MEG, PBL that may not be in current API.
  */
 export async function isValidSetCode(code: string): Promise<boolean> {
-  if (!code) return false;
-  
+  return Boolean(await resolveApiSetId(code));
+}
+
+async function resolveApiSetId(code: string): Promise<string | null> {
+  if (!code) return null;
+
   const normalizedCode = code.toLowerCase();
+  if (KNOWN_SET_CODE_ALIASES[normalizedCode]) {
+    return KNOWN_SET_CODE_ALIASES[normalizedCode];
+  }
+
   const sets = await fetchPokemonTcgSets();
-  
+
   // Check against official API data
-  const isValid = sets.some(set => 
-    set.id.toLowerCase() === normalizedCode || 
+  const matchingSet = sets.find(set =>
+    set.id.toLowerCase() === normalizedCode ||
     (set.ptcgoCode && set.ptcgoCode.toLowerCase() === normalizedCode)
   );
-  
-  if (isValid) return true;
-  
+  if (matchingSet) {
+    return matchingSet.id.toLowerCase();
+  }
+
   // Handle special cases for sets that may not be in current API data
   // This provides fallback support for common set codes
   const knownSetCodes = [
     'meg', // Mega Evolution
+    'pfl', // Phantasmal Flames
     'pbl', // Pokémon League / Promo
     'sv1', 'sv2', 'sv3', 'sv4', 'sv5', 'sv6', // Scarlet & Violet series
     'swsh1', 'swsh2', 'swsh3', 'swsh4', 'swsh5', // Sword & Shield series
     'sm1', 'sm2', 'sm3', 'sm4', // Sun & Moon series
     'xy1', 'xy2', 'xy3', // XY series
   ];
-  
-  return knownSetCodes.includes(normalizedCode);
+
+  return knownSetCodes.includes(normalizedCode) ? normalizedCode : null;
 }
 
 /**
@@ -149,24 +187,87 @@ function slugify(text: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+const FINISH_VARIANTS: Record<string, CardVariant> = {
+  normal: 'Normal',
+  holofoil: 'Holo',
+  reverseHolofoil: 'Reverse Holo',
+  '1stEditionHolofoil': '1st Edition Holo',
+  '1stEditionNormal': '1st Edition Normal',
+  unlimitedHolofoil: 'Unlimited Holo',
+  unlimitedNormal: 'Unlimited Normal',
+  cosmosHolofoil: 'Cosmo Holo',
+  cosmoHolofoil: 'Cosmo Holo',
+  promoHolofoil: 'Promo Holo',
+};
+
+const FINISH_PRIORITY = [
+  'holofoil',
+  'normal',
+  'reverseHolofoil',
+  'cosmosHolofoil',
+  'cosmoHolofoil',
+  'promoHolofoil',
+  'unlimitedHolofoil',
+  'unlimitedNormal',
+  '1stEditionHolofoil',
+  '1stEditionNormal',
+];
+
+function finishKeyToIdSuffix(finishKey: string): string {
+  return finishKey
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function finishKeyToVariant(finishKey: string): CardVariant {
+  if (FINISH_VARIANTS[finishKey]) {
+    return FINISH_VARIANTS[finishKey];
+  }
+
+  const spaced = finishKey
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/foil/gi, 'Holo')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/cosmo|cosmos/i.test(spaced)) return 'Cosmo Holo';
+  if (/reverse/i.test(spaced)) return 'Reverse Holo';
+  if (/promo/i.test(spaced)) return 'Promo Holo';
+  if (/holo/i.test(spaced)) return 'Holo';
+  return 'Normal';
+}
+
+function getPriceFromFinish(priceObj: any): number {
+  if (priceObj && typeof priceObj === 'object') {
+    return Number(priceObj.market || priceObj.mid || priceObj.low || 0.50);
+  }
+  return 0.50;
+}
+
+function inferPrimaryFinishKey(apiCard: any, availableFinishKeys: string[]): string {
+  if (availableFinishKeys.length === 0) return 'normal';
+  const inferredVariant = apiCard.rarity === 'ACE SPEC' || apiCard.rarity?.includes('Rare') ? 'Holo' : 'Normal';
+  const matchingKey = availableFinishKeys.find((key) => finishKeyToVariant(key) === inferredVariant);
+  if (matchingKey) return matchingKey;
+
+  return FINISH_PRIORITY.find((key) => availableFinishKeys.includes(key)) || availableFinishKeys[0];
+}
+
 /**
- * Maps a Pokemontcg.io raw API card object to LogicalCard and CardPrinting.
+ * Maps a Pokemontcg.io raw API card object to a LogicalCard and all local finish printings.
  */
-export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: LogicalCard; printing: CardPrinting } {
+export function transformApiCardToLogicalAndPrintings(apiCard: any): { card: LogicalCard; printings: CardPrinting[] } {
   const cardName = apiCard.name || 'Unknown Card';
   const slug = slugify(cardName);
   const cardId = `card_${slug}`;
-  const printingId = apiCard.id; // Canonical ID from Pokemontcg API (e.g., 'sv1-196', 'xy1-4', 'paf-137')
-
-  // Derive market price from TCGPlayer object if available
-  let marketPrice = 0.50;
-  if (apiCard.tcgplayer?.prices) {
-    const prices = apiCard.tcgplayer.prices;
-    const priceObj = prices.holofoil || prices.normal || prices.unlimitedHolofoil || prices.reverseHolofoil || prices['1stEditionHolofoil'] || Object.values(prices)[0];
-    if (priceObj && typeof priceObj === 'object') {
-      marketPrice = priceObj.market || priceObj.mid || priceObj.low || 0.50;
-    }
-  }
+  const canonicalPrintingId = apiCard.id; // Canonical ID from Pokemontcg API (e.g., 'sv1-196', 'xy1-4', 'paf-137')
+  const prices = apiCard.tcgplayer?.prices || {};
+  const availableFinishKeys = Object.keys(prices).filter((key) => prices[key] && typeof prices[key] === 'object');
+  const finishKeys = availableFinishKeys.length > 0 ? availableFinishKeys : ['normal'];
+  const primaryFinishKey = inferPrimaryFinishKey(apiCard, finishKeys);
+  const orderedFinishKeys = [primaryFinishKey, ...finishKeys.filter((finishKey) => finishKey !== primaryFinishKey)];
 
   // Subtype mapping
   const primarySubtype = (apiCard.subtypes && apiCard.subtypes.length > 0) ? apiCard.subtypes[0] : '';
@@ -209,31 +310,36 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
     expanded: apiCard.legalities?.expanded || false,
   };
 
-  const printing: CardPrinting = {
-    id: printingId,
-    cardId,
-    cardName,
-    setCode: apiCard.set?.ptcgoCode || apiCard.set?.id?.toUpperCase() || 'SVI',
-    setName: apiCard.set?.name || 'Scarlet & Violet',
-    cardNumber: apiCard.number || '1',
-    rarity: (apiCard.rarity as CardRarity) || 'Common',
-    variant: (apiCard.rarity === 'ACE SPEC' ? 'Holo' : (apiCard.rarity?.includes('Rare') ? 'Holo' : 'Normal')) as CardVariant,
-    language: 'English',
-    imageUrl,
-    marketPrice: Number(marketPrice.toFixed(2)),
-    // Extended fields
-    attacks,
-    abilities,
-    weaknesses,
-    resistances,
-    retreatCost: typeof apiCard.convertedRetreatCost === 'number' ? apiCard.convertedRetreatCost : undefined,
-    nationalPokedexNumbers: apiCard.nationalPokedexNumbers,
-    regulationMark: apiCard.regulationMark,
-    legalities,
-    artist: apiCard.artist,
-    imageUrlSmall: apiCard.images?.small,
-    imageUrlLarge: apiCard.images?.large,
-  };
+  const printings: CardPrinting[] = orderedFinishKeys.map((finishKey) => {
+    const isPrimaryFinish = finishKey === primaryFinishKey;
+    const marketPrice = getPriceFromFinish(prices[finishKey]);
+
+    return {
+      id: isPrimaryFinish ? canonicalPrintingId : `${canonicalPrintingId}__${finishKeyToIdSuffix(finishKey)}`,
+      cardId,
+      cardName,
+      setCode: apiCard.set?.ptcgoCode || apiCard.set?.id?.toUpperCase() || 'SVI',
+      setName: apiCard.set?.name || 'Scarlet & Violet',
+      cardNumber: apiCard.number || '1',
+      rarity: (apiCard.rarity as CardRarity) || 'Common',
+      variant: finishKeyToVariant(finishKey),
+      language: 'English',
+      imageUrl,
+      marketPrice: Number(marketPrice.toFixed(2)),
+      // Extended fields
+      attacks,
+      abilities,
+      weaknesses,
+      resistances,
+      retreatCost: typeof apiCard.convertedRetreatCost === 'number' ? apiCard.convertedRetreatCost : undefined,
+      nationalPokedexNumbers: apiCard.nationalPokedexNumbers,
+      regulationMark: apiCard.regulationMark,
+      legalities,
+      artist: apiCard.artist,
+      imageUrlSmall: apiCard.images?.small,
+      imageUrlLarge: apiCard.images?.large,
+    };
+  });
 
   const card: LogicalCard = {
     id: cardId,
@@ -244,11 +350,19 @@ export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: Logi
     types: apiCard.types || [],
     rules: apiCard.rules || [],
     isAceSpec: apiCard.rarity === 'ACE SPEC' || (apiCard.rules || []).some((r: string) => r.includes('ACE SPEC')),
-    defaultPrintingId: printingId,
-    printings: [printing],
+    defaultPrintingId: canonicalPrintingId,
+    printings,
   };
 
-  return { card, printing };
+  return { card, printings };
+}
+
+/**
+ * Backwards-compatible mapper for call sites that need a primary printing.
+ */
+export function transformApiCardToLogicalAndPrinting(apiCard: any): { card: LogicalCard; printing: CardPrinting } {
+  const { card, printings } = transformApiCardToLogicalAndPrintings(apiCard);
+  return { card, printing: printings[0] };
 }
 
 /**
@@ -282,6 +396,7 @@ export interface ParsedQuery {
 export async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
   const clean = rawQuery.trim();
   const tokens = clean.split(/\s+/).filter(Boolean);
+  const tokenParts: { token: string; kind: 'name' | 'setCandidate' | 'number' }[] = [];
   
   const result: ParsedQuery = {
     cardName: '',
@@ -295,8 +410,8 @@ export async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
   // Pattern for set codes: 2-4 uppercase letters, optionally followed by numbers
   const setCodePattern = /^[A-Z]{2,4}\d*$/;
   
-  // Pattern for card numbers: standalone numbers
-  const cardNumberPattern = /^\d+$/;
+  // Pattern for card numbers: standalone numbers, optionally prefixed by '#'
+  const cardNumberPattern = /^#?\d+[a-z]?$/i;
 
   // Handle ex/EX/Mega/V/VMAX/VSTAR subtypes - these should be part of card name, not treated as set codes
   const subtypePatterns = ['ex', 'EX', 'Mega', 'V', 'VMAX', 'VSTAR', 'GX', 'TAG TEAM', 'RESTORED'];
@@ -312,43 +427,41 @@ export async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
         upperToken.includes('VMAX') || 
         upperToken.includes('VSTAR')) {
       // Treat as part of card name
-      if (result.cardName) {
-        result.cardName += ' ';
-      }
-      result.cardName += token;
+      tokenParts.push({ token, kind: 'name' });
       continue;
     }
 
-    // Check if token might be a set code (pattern match)
-    if (setCodePattern.test(upperToken) && !result.hasSetCode) {
+    // Check if token might be a set code (pattern match). Validation happens after
+    // tokenization so invalid guesses like "Dawn" can fall back into cardName.
+    if (setCodePattern.test(upperToken)) {
       result.suspectedSetCodes.push(upperToken.toLowerCase());
-      result.setCode = upperToken.toLowerCase();
-      result.hasSetCode = true;
+      tokenParts.push({ token, kind: 'setCandidate' });
     }
     // Check if token is a card number (and not part of set code)
     else if (cardNumberPattern.test(token) && !result.hasCardNumber) {
-      result.cardNumber = token;
+      result.cardNumber = token.replace(/^#/, '');
       result.hasCardNumber = true;
+      tokenParts.push({ token, kind: 'number' });
     }
     // Otherwise, treat as part of card name
     else {
-      if (result.cardName) {
-        result.cardName += ' ';
-      }
-      result.cardName += token;
+      tokenParts.push({ token, kind: 'name' });
     }
   }
 
   // Validate suspected set codes against actual API metadata
+  let selectedSetCandidate = '';
   if (result.suspectedSetCodes.length > 0) {
-    const validSetCodes = await Promise.all(
-      result.suspectedSetCodes.map(code => isValidSetCode(code))
+    const resolvedSetCodes = await Promise.all(
+      result.suspectedSetCodes.map(code => resolveApiSetId(code))
     );
     
     // Use only validated set codes
-    const validCodes = result.suspectedSetCodes.filter((_, i) => validSetCodes[i]);
-    if (validCodes.length > 0) {
-      result.setCode = validCodes[0]; // Use first valid set code
+    const selectedIdx = resolvedSetCodes.findIndex(Boolean);
+    const validCode = selectedIdx !== -1 ? resolvedSetCodes[selectedIdx] : null;
+    if (validCode) {
+      selectedSetCandidate = result.suspectedSetCodes[selectedIdx];
+      result.setCode = validCode;
       result.hasSetCode = true;
     } else {
       // No valid set codes found, treat as card name instead
@@ -357,6 +470,15 @@ export async function parseSearchQuery(rawQuery: string): Promise<ParsedQuery> {
       result.suspectedSetCodes = [];
     }
   }
+
+  result.cardName = tokenParts
+    .filter((part) => {
+      if (part.kind === 'number') return false;
+      if (part.kind === 'setCandidate' && part.token.toLowerCase() === selectedSetCandidate) return false;
+      return true;
+    })
+    .map((part) => part.token)
+    .join(' ');
 
   return result;
 }
@@ -417,6 +539,43 @@ export interface CardSearchResult {
   page: number;
   pageSize: number;
   error?: string;
+  errorType?: 'transient' | 'permanent';
+  status?: number;
+}
+
+function createFailedSearchResult(
+  page: number,
+  pageSize: number,
+  error: string,
+  errorType: 'transient' | 'permanent',
+  status?: number
+): CardSearchResult {
+  return {
+    success: false,
+    cards: [],
+    printings: [],
+    totalCount: 0,
+    page,
+    pageSize,
+    error,
+    errorType,
+    status,
+  };
+}
+
+function getRetryDelayMs(attempt: number, retryAfter?: string | null): number {
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1000, 30000);
+  }
+
+  const baseDelay = 1000 * 2 ** (attempt - 1);
+  const jitter = Math.floor(Math.random() * 300);
+  return Math.min(baseDelay + jitter, 10000);
+}
+
+function isTransientFetchError(err: any): boolean {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError' || err instanceof TypeError;
 }
 
 /**
@@ -510,7 +669,6 @@ async function executeSearch(
   // Create new request
   const requestPromise = (async () => {
     try {
-      await rateLimit('searchCards');
       const params = new URLSearchParams();
       if (luceneQ) {
         params.append('q', luceneQ);
@@ -519,124 +677,83 @@ async function executeSearch(
       params.append('pageSize', String(pageSize));
 
       const apiUrl = `${POKEMON_TCG_API_BASE}/cards?${params.toString()}`;
-      console.log(`[CardDataProvider] Fetching: ${apiUrl}`);
 
-      const res = await fetch(apiUrl, {
-        headers: getApiHeaders(),
-        signal: AbortSignal.timeout(10000), // 10 second timeout
-      });
+      for (let attempt = 1; attempt <= MAX_TRANSIENT_ATTEMPTS; attempt++) {
+        await rateLimit('searchCards');
+        console.log(`[CardDataProvider] Fetching: ${apiUrl}`);
 
-      if (!res.ok) {
-        const status = res.status;
-        const statusText = res.statusText;
-        
-        // Intelligent error handling based on status code
-        if (status === 402) {
-          // 402 = Request Failed - do NOT retry
-          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP 402 (Request Failed) - not retrying`);
-          const error = `Pokémon TCG API request failed (402)`;
-          failureCache.set(cacheKey, { timestamp: Date.now(), error });
-          return {
-            success: false,
-            cards: [],
-            printings: [],
-            totalCount: 0,
-            page,
-            pageSize,
-            error,
-          };
-        } else if (status === 429) {
-          // 429 = Too Many Requests - respect Retry-After if provided
-          const retryAfter = res.headers.get('Retry-After');
-          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP 429 (Rate Limited) - Retry-After: ${retryAfter}s`);
-          const error = `Rate limited by Pokémon TCG API (429)`;
-          failureCache.set(cacheKey, { timestamp: Date.now(), error });
-          return {
-            success: false,
-            cards: [],
-            printings: [],
-            totalCount: 0,
-            page,
-            pageSize,
-            error,
-          };
-        } else if (status >= 500 && status < 600) {
-          // 5xx errors - single retry with exponential backoff, then fail
-          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${status} (${statusText}) - will retry once`);
-          
-          // Exponential backoff: wait 1s, then retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          const retryRes = await fetch(apiUrl, {
+        try {
+          const res = await fetch(apiUrl, {
             headers: getApiHeaders(),
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(API_TIMEOUT_MS),
           });
-          
-          if (!retryRes.ok) {
-            console.warn(`[CardDataProvider] Retry also failed with HTTP ${retryRes.status}`);
-            const error = `Pokémon TCG API returned HTTP ${retryRes.status}`;
-            failureCache.set(cacheKey, { timestamp: Date.now(), error });
-            return {
-              success: false,
-              cards: [],
-              printings: [],
-              totalCount: 0,
-              page,
-              pageSize,
-              error,
-            };
+
+          if (res.ok) {
+            const json = await res.json();
+            return processApiResponse(json, cacheKey, page, pageSize);
           }
-          
-          // Retry succeeded - continue processing
-          const json = await retryRes.json();
-          return processApiResponse(json, cacheKey, page, pageSize);
-        } else {
-          // Other 4xx errors - do not retry
-          console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${status} (${statusText}) - not retrying`);
+
+          const status = res.status;
+          const statusText = res.statusText;
+
+          if (status === 402) {
+            const error = 'Pokémon TCG API request failed (402)';
+            console.warn(`[CardDataProvider] ${error} - not retrying`);
+            failureCache.set(cacheKey, { timestamp: Date.now(), error });
+            return createFailedSearchResult(page, pageSize, error, 'permanent', status);
+          }
+
+          if (status === 429 || (status >= 500 && status < 600)) {
+            const error = status === 429
+              ? 'Rate limited by Pokémon TCG API (429)'
+              : `Pokémon TCG API returned HTTP ${status}`;
+
+            if (attempt === MAX_TRANSIENT_ATTEMPTS) {
+              console.warn(`[CardDataProvider] ${error} after ${attempt} attempts`);
+              failureCache.set(cacheKey, { timestamp: Date.now(), error });
+              return createFailedSearchResult(page, pageSize, error, 'transient', status);
+            }
+
+            const delay = getRetryDelayMs(attempt, res.headers.get('Retry-After'));
+            console.warn(`[CardDataProvider] Pokémon TCG API returned HTTP ${status} (${statusText}) - retrying in ${delay}ms (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+
           const error = `Pokémon TCG API returned HTTP ${status}`;
+          console.warn(`[CardDataProvider] ${error} (${statusText}) - not retrying`);
           failureCache.set(cacheKey, { timestamp: Date.now(), error });
-          return {
-            success: false,
-            cards: [],
-            printings: [],
-            totalCount: 0,
-            page,
-            pageSize,
-            error,
-          };
+          return createFailedSearchResult(page, pageSize, error, 'permanent', status);
+        } catch (err: any) {
+          if (isTransientFetchError(err)) {
+            const error = err.name === 'TimeoutError' || err.name === 'AbortError'
+              ? `Request timed out after ${API_TIMEOUT_MS / 1000} seconds`
+              : 'Network error while contacting Pokémon TCG API';
+
+            if (attempt === MAX_TRANSIENT_ATTEMPTS) {
+              console.warn(`[CardDataProvider] ${error} after ${attempt} attempts`);
+              failureCache.set(cacheKey, { timestamp: Date.now(), error });
+              return createFailedSearchResult(page, pageSize, error, 'transient');
+            }
+
+            const delay = getRetryDelayMs(attempt);
+            console.warn(`[CardDataProvider] ${error} - retrying in ${delay}ms (${attempt}/${MAX_TRANSIENT_ATTEMPTS})`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+
+          throw err;
         }
       }
 
-      const json = await res.json();
-      return processApiResponse(json, cacheKey, page, pageSize);
+      const error = 'Pokémon TCG API request failed';
+      failureCache.set(cacheKey, { timestamp: Date.now(), error });
+      return createFailedSearchResult(page, pageSize, error, 'transient');
     } catch (err: any) {
-      // Handle timeout errors specifically
-      if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-        console.warn('[CardDataProvider] Request timed out after 10 seconds');
-        const error = 'Request timed out';
-        failureCache.set(cacheKey, { timestamp: Date.now(), error });
-        return {
-          success: false,
-          cards: [],
-          printings: [],
-          totalCount: 0,
-          page,
-          pageSize,
-          error,
-        };
-      }
       console.error('[CardDataProvider] Request failed:', err);
       const error = 'Card search is temporarily unavailable. Please try again.';
       failureCache.set(cacheKey, { timestamp: Date.now(), error });
-      return {
-        success: false,
-        cards: [],
-        printings: [],
-        totalCount: 0,
-        page,
-        pageSize,
-        error,
-      };
+      return createFailedSearchResult(page, pageSize, error, 'transient');
     } finally {
       // Clean up in-flight request
       inFlightRequests.delete(cacheKey);
@@ -660,7 +777,7 @@ function processApiResponse(json: any, cacheKey: string, page: number, pageSize:
   const cardMap = new Map<string, { card: LogicalCard; printings: CardPrinting[] }>();
 
   for (const rawCard of rawCards) {
-    const { card, printing } = transformApiCardToLogicalAndPrinting(rawCard);
+    const { card, printings } = transformApiCardToLogicalAndPrintings(rawCard);
     if (!cardMap.has(card.id)) {
       cardMap.set(card.id, {
         card: { ...card, printings: [] },
@@ -668,9 +785,10 @@ function processApiResponse(json: any, cacheKey: string, page: number, pageSize:
       });
     }
     const existing = cardMap.get(card.id)!;
-    // Add printing if not already included
-    if (!existing.printings.some((p) => p.id === printing.id)) {
-      existing.printings.push(printing);
+    for (const printing of printings) {
+      if (!existing.printings.some((p) => p.id === printing.id)) {
+        existing.printings.push(printing);
+      }
     }
   }
 

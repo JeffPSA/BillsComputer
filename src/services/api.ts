@@ -77,7 +77,7 @@ export interface CardSearchApiResponse {
 
 export async function searchCardsApi(
   query: string,
-  options?: { supertype?: string; setCode?: string; page?: number; pageSize?: number }
+  options?: { supertype?: string; setCode?: string; page?: number; pageSize?: number; signal?: AbortSignal }
 ): Promise<CardSearchApiResponse> {
   const q = (query || '').trim();
   try {
@@ -90,6 +90,7 @@ export async function searchCardsApi(
 
     const res = await fetch(`${API_BASE}/api/cards/search?${params.toString()}`, {
       headers: getAuthHeaders(),
+      signal: options?.signal,
     });
     if (!res.ok) {
       return {
@@ -100,7 +101,14 @@ export async function searchCardsApi(
     }
     const data = await res.json();
     return data;
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return {
+        success: false,
+        cards: [],
+        error: 'Search cancelled',
+      };
+    }
     console.error('API card search error:', err);
     return {
       success: false,
@@ -127,6 +135,13 @@ export async function getCardDetailsApi(id: string): Promise<{ card?: LogicalCar
 
 export async function fetchCards(query = '', supertype = ''): Promise<LogicalCard[]> {
   try {
+    if (!query.trim() && !supertype.trim()) {
+      const res = await fetch(`${API_BASE}/api/cards`, {
+        headers: getAuthHeaders(),
+      });
+      return await res.json();
+    }
+
     const searchRes = await searchCardsApi(query, { supertype });
     if (searchRes.success) {
       return searchRes.cards;
@@ -136,6 +151,30 @@ export async function fetchCards(query = '', supertype = ''): Promise<LogicalCar
     console.warn('API error in fetchCards:', err);
     return [];
   }
+}
+
+export async function browseDatabaseCards(options: {
+  query?: string;
+  supertype?: string;
+  setCode?: string;
+  rarity?: string;
+  variant?: string;
+  ownership?: string;
+  wishlist?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<any> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      params.append(key, String(value));
+    }
+  }
+
+  const res = await fetch(`${API_BASE}/api/cards/browser?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
 }
 
 export async function createCustomCard(cardData: Partial<LogicalCard> & { setCode?: string; marketPrice?: number }) {
@@ -316,6 +355,87 @@ export async function recordAcquisition(acquisitionData: {
 
 export async function searchMarketplace(query: string): Promise<MarketplaceListing[]> {
   const res = await fetch(`${API_BASE}/api/marketplace/search?query=${encodeURIComponent(query)}`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function fetchAdminHealth(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/health`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function fetchCurrencySettings(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/settings/currency`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function updateCurrencySettings(usdToZarRate: number): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/settings/currency`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ usdToZarRate }),
+  });
+  return await res.json();
+}
+
+export async function startAdminSync(
+  mode: 'incremental' | 'force' | 'sets-only' | 'single-set',
+  options?: { setCode?: string }
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/sync`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ mode, ...options }),
+  });
+  return await res.json();
+}
+
+export async function stopAdminSync(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/sync/stop`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function createAdminBackup(): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/admin/backup`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function fetchWishlist(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/api/wishlist`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function addWishlistItem(item: {
+  cardId: string;
+  printingId?: string;
+  quantity?: number;
+  priority?: string;
+  notes?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/wishlist`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(item),
+  });
+  return await res.json();
+}
+
+export async function deleteWishlistItem(id: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/wishlist/${id}`, {
+    method: 'DELETE',
     headers: getAuthHeaders(),
   });
   return await res.json();
