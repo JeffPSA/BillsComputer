@@ -170,17 +170,19 @@ Tasks:
 
 ## Later: Database Card Browser
 
-Status: later
+Status: done
 
 Goal: add a database browser section for browsing every local card/printing in SQLite.
 
 Notes:
 
-- Make it useful for master set collecting: filter by set, card type, rarity, ownership, wishlist state, and missing cards.
-- Add direct actions from the browser to add cards to Collection.
-- Add direct actions from the browser to add cards to Wishlist so the Wishlist page becomes more useful.
-- Keep it SQLite-first and paginated/virtualized so it does not slow the hosted server down.
-- Consider replacing the hidden Assemble Deck slot with this section when ready.
+- Done: add Browser navigation section for local SQLite catalogue browsing.
+- Done: make it useful for master set collecting: filter by set, card type, rarity, owned/missing state, and wishlist state.
+- Done: add direct actions from the browser to add one copy to Collection.
+- Done: add direct actions from the browser to add one copy to Wishlist.
+- Done: make Wishlist persistent in SQLite so browser-added targets appear on the Wishlist page.
+- Done: keep it SQLite-first and paginated so it does not slow the hosted server down.
+- Later: add master-set completion progress by set if/when needed.
 
 ## Later: Home Dashboard Routine API
 

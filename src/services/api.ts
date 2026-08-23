@@ -153,6 +153,29 @@ export async function fetchCards(query = '', supertype = ''): Promise<LogicalCar
   }
 }
 
+export async function browseDatabaseCards(options: {
+  query?: string;
+  supertype?: string;
+  setCode?: string;
+  rarity?: string;
+  ownership?: string;
+  wishlist?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<any> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      params.append(key, String(value));
+    }
+  }
+
+  const res = await fetch(`${API_BASE}/api/cards/browser?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
 export async function createCustomCard(cardData: Partial<LogicalCard> & { setCode?: string; marketPrice?: number }) {
   const res = await fetch(`${API_BASE}/api/cards`, {
     method: 'POST',
@@ -382,6 +405,36 @@ export async function stopAdminSync(): Promise<any> {
 export async function createAdminBackup(): Promise<any> {
   const res = await fetch(`${API_BASE}/api/admin/backup`, {
     method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function fetchWishlist(): Promise<any[]> {
+  const res = await fetch(`${API_BASE}/api/wishlist`, {
+    headers: getAuthHeaders(),
+  });
+  return await res.json();
+}
+
+export async function addWishlistItem(item: {
+  cardId: string;
+  printingId?: string;
+  quantity?: number;
+  priority?: string;
+  notes?: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/wishlist`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(item),
+  });
+  return await res.json();
+}
+
+export async function deleteWishlistItem(id: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/wishlist/${id}`, {
+    method: 'DELETE',
     headers: getAuthHeaders(),
   });
   return await res.json();

@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard';
 import { DeckList } from './components/DeckBuilder/DeckList';
 import { DeckEditor } from './components/DeckBuilder/DeckEditor';
 import { CollectionManager } from './components/Collection/CollectionManager';
+import { DatabaseCardBrowser } from './components/CardBrowser/DatabaseCardBrowser';
 import { AllocationsDashboard } from './components/Allocations/AllocationsDashboard';
 import { AssembleDeckView } from './components/AssembleDeck/AssembleDeckView';
 import { BulkHunterView } from './components/BulkHunter/BulkHunterView';
@@ -382,6 +383,10 @@ export default function App() {
                 onUpdateItem={handleUpdateCollectionItem}
                 onOpenQuickAdd={() => setShowQuickAddModal(true)}
               />
+            )}
+
+            {activeTab === 'browser' && (
+              <DatabaseCardBrowser onCollectionChanged={refreshAllData} />
             )}
 
             {activeTab === 'allocations' && (

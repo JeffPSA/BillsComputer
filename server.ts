@@ -505,6 +505,63 @@ async function startServer() {
     }
   });
 
+  // GET /api/cards/browser (SQLite-only paginated catalogue browser)
+  app.get('/api/cards/browser', requireAuth, (req, res) => {
+    try {
+      const result = dbManager.browseCards({
+        query: (req.query.query as string || '').trim(),
+        supertype: req.query.supertype as string,
+        setCode: req.query.setCode as string,
+        rarity: req.query.rarity as string,
+        ownership: req.query.ownership as any,
+        wishlist: req.query.wishlist as any,
+        page: Number(req.query.page || 1),
+        pageSize: Number(req.query.pageSize || 30),
+      });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('[Browser] Error browsing cards:', err);
+      res.status(500).json({ success: false, error: 'Unable to browse local cards', cards: [], totalCount: 0 });
+    }
+  });
+
+  // GET /api/wishlist (Persistent SQLite wishlist)
+  app.get('/api/wishlist', requireAuth, (_req, res) => {
+    try {
+      res.json(dbManager.getWishlistItemsWithCards());
+    } catch (err: any) {
+      console.error('[Wishlist] Error reading wishlist:', err);
+      res.status(500).json({ error: 'Unable to read wishlist' });
+    }
+  });
+
+  // POST /api/wishlist (Add/increment persistent wishlist item)
+  app.post('/api/wishlist', requireAuth, (req, res) => {
+    try {
+      const { cardId, printingId, quantity, priority, notes } = req.body;
+      if (!cardId) {
+        return res.status(400).json({ error: 'cardId required' });
+      }
+
+      const item = dbManager.upsertWishlistItem({ cardId, printingId, quantity, priority, notes });
+      res.json({ success: true, item, wishlist: dbManager.getWishlistItemsWithCards() });
+    } catch (err: any) {
+      console.error('[Wishlist] Error saving wishlist item:', err);
+      res.status(500).json({ error: err?.message || 'Unable to save wishlist item' });
+    }
+  });
+
+  // DELETE /api/wishlist/:id
+  app.delete('/api/wishlist/:id', requireAuth, (req, res) => {
+    try {
+      dbManager.deleteWishlistItem(req.params.id);
+      res.json({ success: true, wishlist: dbManager.getWishlistItemsWithCards() });
+    } catch (err: any) {
+      console.error('[Wishlist] Error deleting wishlist item:', err);
+      res.status(500).json({ error: 'Unable to delete wishlist item' });
+    }
+  });
+
   // GET /api/cards/search (LOCAL FIRST, API fallback only if empty)
   app.get('/api/cards/search', requireAuth, async (req, res) => {
     try {

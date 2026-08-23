@@ -148,6 +148,17 @@ interface StoredAcquisition extends Acquisition {
   totalCost: number;
 }
 
+interface CardBrowserOptions {
+  query?: string;
+  supertype?: string;
+  setCode?: string;
+  rarity?: string;
+  ownership?: 'ALL' | 'OWNED' | 'MISSING';
+  wishlist?: 'ALL' | 'WISHLIST' | 'NOT_WISHLIST';
+  page?: number;
+  pageSize?: number;
+}
+
 function parseJsonField<T>(value: unknown, fallback: T): T {
   if (!value || typeof value !== 'string') {
     return fallback;
@@ -400,6 +411,19 @@ export class DatabaseManager {
       isDefault: Boolean(row.isDefault),
       categories: parseJsonField(row.categories, []),
       overrides: parseJsonField(row.overrides, []),
+    };
+  }
+
+  private parseWishlistRow(row: any): any {
+    const preferredChannelMatch = typeof row.notes === 'string'
+      ? row.notes.match(/Preferred channel:\s*(.+)$/i)
+      : null;
+
+    return {
+      ...row,
+      targetQuantity: row.quantity,
+      preferredPrintingId: row.printingId,
+      preferredAcquisition: preferredChannelMatch?.[1] || 'Online',
     };
   }
 
@@ -888,6 +912,214 @@ export class DatabaseManager {
     ).map((row) => this.parsePrintingRow(row));
 
     return this.attachPrintings(cards, printings);
+  }
+
+  browseCards(options: CardBrowserOptions): {
+    cards: LogicalCard[];
+    totalCount: number;
+    page: number;
+    pageSize: number;
+    sets: CardSet[];
+    rarities: string[];
+    ownershipByCardId: Record<string, { ownedQuantity: number; wishlistQuantity: number }>;
+  } {
+    const page = Math.max(1, Number(options.page || 1));
+    const pageSize = Math.max(1, Math.min(100, Number(options.pageSize || 30)));
+    const offset = (page - 1) * pageSize;
+    const normalizedQuery = normalizeSearchText(options.query || '');
+    const tokens = normalizedQuery ? normalizedQuery.split(/\s+/) : [];
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const normalizedCardNameSql = `LOWER(REPLACE(REPLACE(REPLACE(REPLACE(c.name, '''', ''), '’', ''), '"', ''), '#', ''))`;
+
+    if (options.supertype && options.supertype !== 'ALL') {
+      where.push('c.supertype = ?');
+      params.push(options.supertype);
+    }
+
+    if (options.setCode && options.setCode !== 'ALL') {
+      where.push('UPPER(p.setCode) = UPPER(?)');
+      params.push(options.setCode);
+    }
+
+    if (options.rarity && options.rarity !== 'ALL') {
+      where.push('p.rarity = ?');
+      params.push(options.rarity);
+    }
+
+    if (options.ownership === 'OWNED') {
+      where.push('EXISTS (SELECT 1 FROM collection_items ci WHERE ci.cardId = c.id AND ci.quantity > 0)');
+    } else if (options.ownership === 'MISSING') {
+      where.push('NOT EXISTS (SELECT 1 FROM collection_items ci WHERE ci.cardId = c.id AND ci.quantity > 0)');
+    }
+
+    if (options.wishlist === 'WISHLIST') {
+      where.push('EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.cardId = c.id)');
+    } else if (options.wishlist === 'NOT_WISHLIST') {
+      where.push('NOT EXISTS (SELECT 1 FROM wishlist_items wi WHERE wi.cardId = c.id)');
+    }
+
+    for (const token of tokens) {
+      const likeToken = `%${token}%`;
+      where.push(`
+        (
+          ${normalizedCardNameSql} LIKE ?
+          OR LOWER(c.supertype) LIKE ?
+          OR LOWER(c.subtype) LIKE ?
+          OR LOWER(p.setCode) LIKE ?
+          OR LOWER(p.setName) LIKE ?
+          OR LOWER(REPLACE(p.cardNumber, '#', '')) = ?
+          OR LOWER(p.rarity) LIKE ?
+        )
+      `);
+      params.push(likeToken, likeToken, likeToken, likeToken, likeToken, token, likeToken);
+    }
+
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const fromSql = 'FROM cards c LEFT JOIN printings p ON p.cardId = c.id';
+    const totalRow = this.db
+      .prepare(`SELECT COUNT(DISTINCT c.id) as count ${fromSql} ${whereSql}`)
+      .get(...params) as { count: number };
+    const orderParams: unknown[] = [];
+    const orderSql = tokens.length > 0
+      ? `
+        ORDER BY
+          CASE
+            WHEN ${normalizedCardNameSql} = ? THEN 0
+            WHEN ${normalizedCardNameSql} LIKE ? THEN 1
+            ELSE 2
+          END,
+          c.name COLLATE NOCASE
+      `
+      : 'ORDER BY c.name COLLATE NOCASE';
+
+    if (tokens.length > 0) {
+      orderParams.push(normalizedQuery, `${normalizedQuery}%`);
+    }
+
+    const idRows = this.db
+      .prepare(`
+        SELECT DISTINCT c.id, c.name
+        ${fromSql}
+        ${whereSql}
+        ${orderSql}
+        LIMIT ? OFFSET ?
+      `)
+      .all(...params, ...orderParams, pageSize, offset) as { id: string }[];
+    const cardIds = idRows.map((row) => row.id);
+    const sets = this.db.prepare('SELECT * FROM sets ORDER BY releaseDate DESC, name COLLATE NOCASE').all() as CardSet[];
+    const rarities = (
+      this.db.prepare('SELECT DISTINCT rarity FROM printings WHERE rarity IS NOT NULL AND rarity != ? ORDER BY rarity COLLATE NOCASE').all('') as { rarity: string }[]
+    ).map((row) => row.rarity);
+
+    if (cardIds.length === 0) {
+      return { cards: [], totalCount: totalRow.count, page, pageSize, sets, rarities, ownershipByCardId: {} };
+    }
+
+    const placeholders = cardIds.map(() => '?').join(', ');
+    const cardRows = this.db.prepare(`SELECT * FROM cards WHERE id IN (${placeholders})`).all(...cardIds) as any[];
+    const printings = (
+      this.db
+        .prepare(`SELECT * FROM printings WHERE cardId IN (${placeholders}) ORDER BY setName COLLATE NOCASE, cardNumber`)
+        .all(...cardIds) as any[]
+    ).map((row) => this.parsePrintingRow(row));
+    const ownedRows = this.db
+      .prepare(`SELECT cardId, SUM(quantity) as quantity FROM collection_items WHERE cardId IN (${placeholders}) GROUP BY cardId`)
+      .all(...cardIds) as { cardId: string; quantity: number }[];
+    const wishlistRows = this.db
+      .prepare(`SELECT cardId, SUM(quantity) as quantity FROM wishlist_items WHERE cardId IN (${placeholders}) GROUP BY cardId`)
+      .all(...cardIds) as { cardId: string; quantity: number }[];
+    const ownershipByCardId: Record<string, { ownedQuantity: number; wishlistQuantity: number }> = {};
+
+    for (const cardId of cardIds) {
+      ownershipByCardId[cardId] = { ownedQuantity: 0, wishlistQuantity: 0 };
+    }
+    for (const row of ownedRows) {
+      ownershipByCardId[row.cardId] = {
+        ...(ownershipByCardId[row.cardId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
+        ownedQuantity: Number(row.quantity || 0),
+      };
+    }
+    for (const row of wishlistRows) {
+      ownershipByCardId[row.cardId] = {
+        ...(ownershipByCardId[row.cardId] || { ownedQuantity: 0, wishlistQuantity: 0 }),
+        wishlistQuantity: Number(row.quantity || 0),
+      };
+    }
+
+    const cardById = new Map(cardRows.map((row) => [row.id, this.parseCardRow(row)]));
+    const orderedCards = cardIds
+      .map((id) => cardById.get(id))
+      .filter((card): card is LogicalCard => Boolean(card));
+
+    return {
+      cards: this.attachPrintings(orderedCards, printings),
+      totalCount: totalRow.count,
+      page,
+      pageSize,
+      sets,
+      rarities,
+      ownershipByCardId,
+    };
+  }
+
+  getWishlistItemsWithCards(): any[] {
+    const wishlistItems = (this.db.prepare('SELECT * FROM wishlist_items ORDER BY priority, id DESC').all() as any[]).map((row) =>
+      this.parseWishlistRow(row)
+    );
+    const cardIds = [...new Set(wishlistItems.map((item) => item.cardId).filter(Boolean))];
+    const printingIds = [...new Set(wishlistItems.map((item) => item.printingId).filter(Boolean))];
+    const cardsById = new Map(this.selectCardsByIds(cardIds).map((card) => [card.id, card]));
+    const printingsById = new Map(this.selectPrintingsByIds(printingIds).map((printing) => [printing.id, printing]));
+
+    return wishlistItems.map((item) => ({
+      ...item,
+      card: cardsById.get(item.cardId),
+      printing: printingsById.get(item.printingId),
+      cardName: cardsById.get(item.cardId)?.name || item.cardId,
+    }));
+  }
+
+  upsertWishlistItem(input: {
+    cardId: string;
+    printingId?: string;
+    quantity?: number;
+    priority?: string;
+    notes?: string;
+  }): any {
+    const card = this.getCardById(input.cardId);
+    if (!card) {
+      throw new Error('Card not found');
+    }
+
+    const printingId = input.printingId || card.defaultPrintingId;
+    const quantity = Math.max(1, Number(input.quantity || 1));
+    const priority = input.priority || 'Medium';
+    const existing = this.db
+      .prepare('SELECT * FROM wishlist_items WHERE cardId = ? AND printingId = ?')
+      .get(input.cardId, printingId) as any | undefined;
+
+    if (existing) {
+      this.db.prepare(`
+        UPDATE wishlist_items
+        SET quantity = quantity + ?, priority = ?, notes = COALESCE(?, notes)
+        WHERE id = ?
+      `).run(quantity, priority, input.notes ?? null, existing.id);
+      const row = this.db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(existing.id) as any;
+      return this.parseWishlistRow(row);
+    }
+
+    const id = `wl_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    this.db.prepare(`
+      INSERT INTO wishlist_items (id, cardId, printingId, quantity, priority, notes)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, input.cardId, printingId, quantity, priority, input.notes);
+    const row = this.db.prepare('SELECT * FROM wishlist_items WHERE id = ?').get(id) as any;
+    return this.parseWishlistRow(row);
+  }
+
+  deleteWishlistItem(id: string): void {
+    this.db.prepare('DELETE FROM wishlist_items WHERE id = ?').run(id);
   }
 
   searchCardsWithPrintings(options: CardSearchOptions): { cards: LogicalCard[]; totalCount: number } {

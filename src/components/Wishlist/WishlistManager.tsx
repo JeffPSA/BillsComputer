@@ -1,16 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Bookmark,
   Plus,
   Trash2,
-  Check,
   Compass,
   ShoppingBag,
-  Sparkles,
   Eye
 } from 'lucide-react';
 import { AcquisitionPreference } from '../../types/tcg';
 import { CardDetailModal } from '../CardDetailModal';
+import { addWishlistItem, deleteWishlistItem, fetchWishlist } from '../../services/api';
 
 interface WishlistManagerProps {
   allCards: any[];
@@ -30,32 +29,52 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
   const [newPref, setNewPref] = useState<AcquisitionPreference>('Bulk');
   const [newPriority, setNewPriority] = useState<'High' | 'Medium' | 'Low'>('High');
   const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadWishlist = async () => {
+    const items = await fetchWishlist();
+    setWishlistItems(Array.isArray(items) ? items : []);
+  };
+
+  useEffect(() => {
+    loadWishlist();
+  }, []);
 
   const findWishlistCard = (cardName: string) => {
     const normalizedName = cardName.trim().toLowerCase();
     return allCards.find((card) => card.name?.trim().toLowerCase() === normalizedName);
   };
 
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCardName) return;
+    const matchedCard = findWishlistCard(newCardName);
+    if (!matchedCard) {
+      setMessage('Card must exist in the local database before it can be wishlisted.');
+      return;
+    }
 
-    setWishlistItems((prev) => [
-      ...prev,
-      {
-        id: `wl_${Date.now()}`,
-        cardName: newCardName,
-        targetQuantity: newQty,
-        preferredAcquisition: newPref,
-        priority: newPriority,
-      },
-    ]);
+    const result = await addWishlistItem({
+      cardId: matchedCard.id,
+      printingId: matchedCard.defaultPrintingId,
+      quantity: newQty,
+      priority: newPriority,
+      notes: `Preferred channel: ${newPref}`,
+    });
 
+    if (result?.success === false || result?.error) {
+      setMessage(result.error || 'Unable to add wishlist item.');
+      return;
+    }
+
+    setMessage(`Added ${matchedCard.name} to wishlist.`);
     setNewCardName('');
+    await loadWishlist();
   };
 
-  const removeItem = (id: string) => {
-    setWishlistItems((prev) => prev.filter((item) => item.id !== id));
+  const removeItem = async (id: string) => {
+    await deleteWishlistItem(id);
+    await loadWishlist();
   };
 
   return (
@@ -89,6 +108,12 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {message && (
+        <div className="bg-white border border-indigo-200 p-4 rounded-3xl text-xs font-bold text-indigo-900 shadow-sm">
+          {message}
+        </div>
+      )}
 
       {/* Add New Wishlist Item Form */}
       <form onSubmit={handleAddItem} className="bg-white border border-slate-200 p-5 rounded-3xl space-y-3 shadow-sm">
@@ -138,8 +163,8 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
         <div className="divide-y divide-slate-100">
           {wishlistItems.map((item) => {
-            const matchedCard = findWishlistCard(item.cardName);
-            const matchedPrinting = matchedCard?.printings?.[0];
+            const matchedCard = item.card || findWishlistCard(item.cardName);
+            const matchedPrinting = item.printing || matchedCard?.printings?.[0];
 
             return (
             <div key={item.id} className="p-4 flex items-center justify-between gap-4 hover:bg-slate-50 transition">
@@ -175,7 +200,7 @@ export const WishlistManager: React.FC<WishlistManagerProps> = ({
               </div>
 
               <div className="flex items-center space-x-3">
-                <span className="text-xs text-slate-900 font-black">{item.targetQuantity}x Needed</span>
+                <span className="text-xs text-slate-900 font-black">{item.targetQuantity || item.quantity}x Needed</span>
                 <button
                   onClick={() => removeItem(item.id)}
                   className="p-1.5 bg-slate-100 hover:bg-rose-100 hover:text-rose-700 text-slate-400 rounded-xl transition border border-slate-200"

@@ -10,6 +10,7 @@ import {
   Plus,
   LogOut,
   Database,
+  Library,
   Moon,
   Sun
 } from 'lucide-react';
@@ -20,6 +21,7 @@ export type ActiveTab =
   | 'dashboard'
   | 'decks'
   | 'collection'
+  | 'browser'
   | 'allocations'
   | 'assemble'
   | 'bulk-hunter'
@@ -52,6 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'decks', label: 'Decks', icon: <Layers className="w-4 h-4" /> },
     { id: 'collection', label: 'Collection', icon: <Box className="w-4 h-4" /> },
+    { id: 'browser', label: 'Browser', icon: <Library className="w-4 h-4" /> },
     { id: 'allocations', label: 'Allocations', icon: <Share2 className="w-4 h-4" /> },
     { id: 'bulk-hunter', label: 'Bulk Hunter', icon: <Compass className="w-4 h-4" />, badge: 'Mobile' },
     { id: 'shopping', label: 'Shopping', icon: <ShoppingBag className="w-4 h-4" /> },
