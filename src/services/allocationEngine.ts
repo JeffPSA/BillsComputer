@@ -61,7 +61,13 @@ export function calculateCardOwnershipForDeck(
   const availableInCollection = Math.max(0, totalOwnedInCollection - totalAllocatedAcrossActiveDecks);
 
   const required = requirement.quantity;
-  const missing = Math.max(0, required - allocatedToThisDeck - availableInCollection);
+  const remainingNeeded = Math.max(0, required - allocatedToThisDeck);
+  const assignableQuantity = deck.status === 'Active'
+    ? Math.min(remainingNeeded, availableInCollection)
+    : 0;
+  const canFullyAssignNow = remainingNeeded > 0 && assignableQuantity === remainingNeeded;
+  const isSharedWithOtherDecks = allocatedToOtherDecks > 0;
+  const missing = Math.max(0, remainingNeeded - availableInCollection);
 
   // Determine 1 of 4 Ownership States:
   let status: OwnershipStatus;
@@ -84,6 +90,10 @@ export function calculateCardOwnershipForDeck(
     availableInCollection,
     totalOwnedInCollection,
     allocatedToOtherDecks,
+    remainingNeeded,
+    assignableQuantity,
+    canFullyAssignNow,
+    isSharedWithOtherDecks,
     missing,
     status,
     requirementMode: requirement.requirementMode,

@@ -603,6 +603,89 @@ export async function syncCardsForSet(
 }
 
 /**
+ * Retry only the sets left in the persisted failed-set queue.
+ * Successful sets are removed from the queue while failed or unprocessed sets remain.
+ */
+export async function syncFailedSets(options?: SyncOptions): Promise<SyncStats> {
+  const startTime = Date.now();
+  const stats = createStats();
+  const dbManager = getDatabaseManager();
+  const db = dbManager.readDb();
+  const failedSetIds: string[] = Array.from(new Set<string>(
+    Array.isArray(db?.syncMetadata?.failedSetIds)
+      ? db.syncMetadata.failedSetIds.filter((setId: unknown): setId is string => typeof setId === 'string')
+      : []
+  ));
+  const remainingSetIds = new Set(failedSetIds);
+
+  console.log(`[CardSync] Retrying ${failedSetIds.length} failed set(s)...`);
+
+  if (failedSetIds.length === 0) {
+    recordFinalCounts(stats);
+    stats.duration = Date.now() - startTime;
+    reportProgress(options, {
+      phase: 'complete',
+      message: 'Failed-set retry queue is empty',
+      cardsSynced: 0,
+      setsSynced: 0,
+      percent: 100,
+    });
+    return stats;
+  }
+
+  for (const [idx, setId] of failedSetIds.entries()) {
+    if (syncShouldStop(options)) {
+      stats.stopped = true;
+      break;
+    }
+
+    const set = db.sets?.find((candidate: CardSet) => candidate.id === setId);
+    reportProgress(options, {
+      phase: 'cards',
+      message: `Retrying ${set?.name || setId}`,
+      currentSetId: setId,
+      currentSetName: set?.name,
+      currentSetIndex: idx + 1,
+      totalSets: failedSetIds.length,
+      cardsSynced: stats.cardsSynced,
+      setsSynced: stats.setsSynced,
+      percent: Math.round(((idx + 1) / failedSetIds.length) * 100),
+    });
+
+    const cardStats = await syncCardsForSet(setId, 250, options);
+    mergeStats(stats, cardStats);
+
+    if (!cardStats.stopped && !cardStats.failedSetIds.includes(setId)) {
+      remainingSetIds.delete(setId);
+      stats.setsSynced++;
+    }
+
+    if (cardStats.stopped) {
+      stats.stopped = true;
+      break;
+    }
+  }
+
+  stats.failedSetIds = Array.from(remainingSetIds);
+  persistFailedSetIds(stats.failedSetIds);
+  recordFinalCounts(stats);
+  stats.duration = Date.now() - startTime;
+  reportProgress(options, {
+    phase: stats.stopped ? 'stopped' : 'complete',
+    message: stats.stopped
+      ? 'Failed-set retry stopped safely'
+      : stats.failedSetIds.length > 0
+        ? `${stats.failedSetIds.length} set(s) still need retrying`
+        : 'All failed sets synced successfully',
+    cardsSynced: stats.cardsSynced,
+    setsSynced: stats.setsSynced,
+    percent: stats.stopped ? undefined : 100,
+  });
+
+  return stats;
+}
+
+/**
  * Synchronize all cards from all sets.
  * This is a full sync - for incremental sync, use syncCardsIncremental.
  */

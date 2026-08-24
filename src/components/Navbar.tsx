@@ -67,7 +67,13 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo & Branding */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
+          <button
+            type="button"
+            className="flex items-center space-x-3 rounded-2xl text-left focus:outline-none focus:ring-2 focus:ring-yellow-300"
+            onClick={() => setActiveTab('dashboard')}
+            aria-label="Go to dashboard"
+            title="Go to dashboard"
+          >
             <div className="w-9 h-9 shadow-md flex items-center">
               <img
                 src="/android-chrome-192x192.png"
@@ -79,11 +85,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="font-black text-xl italic uppercase tracking-tighter text-white">
                 Bill's PC
               </span>
-              <span className="hidden sm:inline-block ml-2 text-[10px] px-2.5 py-0.5 bg-indigo-900 text-yellow-300 rounded-full font-bold uppercase tracking-wider border border-indigo-500">
-                Limitless + Inventory
-              </span>
             </div>
-          </div>
+          </button>
 
           {/* Action Buttons */}
           <div className="flex items-center space-x-2">
@@ -107,7 +110,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               className="inline-flex items-center space-x-1.5 px-4 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 text-xs font-black uppercase tracking-wider rounded-xl shadow-lg shadow-indigo-900/30 transition"
             >
               <Layers className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>Import Limitless Deck</span>
+              <span>Import Deck</span>
             </button>
             {isAuthenticated && onLogout && (
               <button

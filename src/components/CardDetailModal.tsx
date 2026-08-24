@@ -1,8 +1,9 @@
-import React from 'react';
-import { X, Tag, ShieldAlert, Sparkles, ExternalLink, CircleDollarSign } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Tag, Sparkles, CircleDollarSign, Layers, Loader2 } from 'lucide-react';
 import { LogicalCard, CardPrinting } from '../types/tcg';
 import { getImageUrl, handleImageError } from '../utils/imageUtils';
 import { formatZarFromUsd } from '../utils/currency';
+import { fetchCardDeckUsage } from '../services/api';
 
 interface CardDetailModalProps {
   card: LogicalCard;
@@ -21,6 +22,23 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
 }) => {
   const currentPrinting = printing || (allPrintings.length > 0 ? allPrintings[0] : undefined);
   const printingsList = allPrintings.length > 0 ? allPrintings : card.printings || [];
+  const [deckUsage, setDeckUsage] = useState<any | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setUsageLoading(true);
+    fetchCardDeckUsage(card.id)
+      .then((result) => {
+        if (!cancelled) setDeckUsage(result);
+      })
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [card.id]);
 
   return (
     <div
@@ -109,6 +127,56 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Deck usage and physical assignment summary */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+              <h3 className="text-xs font-black uppercase text-slate-800 tracking-wider flex items-center space-x-1.5">
+                <Layers className="w-4 h-4 text-indigo-700 stroke-[2.5]" />
+                <span>Deck Usage</span>
+              </h3>
+
+              {usageLoading ? (
+                <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Checking deck assignments...
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="bg-white border border-slate-200 rounded-xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">Owned</div>
+                      <div className="text-sm font-black text-slate-900">{deckUsage?.totalOwned || 0}</div>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">In Use</div>
+                      <div className="text-sm font-black text-indigo-700">{deckUsage?.totalAllocated || 0}</div>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-xl py-2">
+                      <div className="text-[9px] font-black uppercase text-slate-400">Free</div>
+                      <div className="text-sm font-black text-emerald-700">{deckUsage?.availableQuantity || 0}</div>
+                    </div>
+                  </div>
+
+                  {deckUsage?.deckUsage?.length > 0 ? (
+                    <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                      {deckUsage.deckUsage.map((usage: any) => (
+                        <div key={usage.deckId} className="flex items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-3 py-2 text-[11px]">
+                          <div className="min-w-0">
+                            <div className="font-black text-slate-900 truncate">{usage.deckName}</div>
+                            <div className="text-[9px] font-bold text-slate-500">{usage.deckVersion} • {usage.deckStatus}</div>
+                          </div>
+                          <div className="font-black text-indigo-700 whitespace-nowrap">
+                            {usage.allocatedQuantity}/{usage.requiredQuantity} assigned
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-500 font-medium">Not used by any deck.</div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Printings Variation Switcher */}

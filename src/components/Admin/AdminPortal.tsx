@@ -51,10 +51,11 @@ export const AdminPortal: React.FC = () => {
     }
   }, [health?.currency?.usdToZarRate]);
 
-  const handleSync = async (mode: 'incremental' | 'force' | 'sets-only') => {
+  const handleSync = async (mode: 'incremental' | 'force' | 'sets-only' | 'failed-only') => {
     const label =
       mode === 'force' ? 'full resync' :
       mode === 'sets-only' ? 'new-set scan' :
+      mode === 'failed-only' ? 'failed-set retry' :
       'incremental sync';
     if (mode === 'force' && !window.confirm('Run a full card database resync? This can take a long time and will use the Pokémon TCG API heavily.')) {
       return;
@@ -240,7 +241,17 @@ export const AdminPortal: React.FC = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button
+              onClick={() => handleSync('failed-only')}
+              disabled={syncJob.running || pendingFailedSets.length === 0}
+              className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 text-amber-900 text-xs font-black uppercase rounded-2xl border border-amber-300 transition"
+              title={pendingFailedSets.length === 0 ? 'The failed-set queue is empty' : `Retry ${pendingFailedSets.length} failed set(s) only`}
+            >
+              <RotateCcw className="w-4 h-4 stroke-[2.5]" />
+              <span>Retry Failed ({pendingFailedSets.length})</span>
+            </button>
+
             <button
               onClick={() => handleSync('sets-only')}
               disabled={syncJob.running}

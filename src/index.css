@@ -30,6 +30,14 @@
   background-color: #2b3344 !important;
 }
 
+.dark-theme .bg-indigo-50\/80 {
+  background-color: #181e2a !important;
+}
+
+.dark-theme .bg-slate-200\/60 {
+  background-color: #202735 !important;
+}
+
 .dark-theme :is(.bg-slate-900, .bg-indigo-950) {
   background-color: #090b10 !important;
 }
@@ -64,6 +72,10 @@
 
 .dark-theme :is(.border-indigo-400, .border-indigo-500) {
   border-color: #6672b8 !important;
+}
+
+.dark-theme :is(.border-blue-300) {
+  border-color: #3b82a8 !important;
 }
 
 .dark-theme :is(.divide-slate-100, .divide-slate-200) > :not([hidden]) ~ :not([hidden]) {
@@ -146,6 +158,10 @@
   background-color: #2b3344 !important;
 }
 
+.dark-theme .hover\:bg-amber-200:hover {
+  background-color: #49351a !important;
+}
+
 .dark-theme :is(.hover\:text-slate-900:hover, .hover\:text-gray-900:hover, .hover\:text-indigo-950:hover, .hover\:text-indigo-700:hover) {
   color: #ffffff !important;
 }
@@ -156,6 +172,29 @@
 
 .dark-theme .ring-indigo-200 {
   --tw-ring-color: rgb(129 140 248 / 0.34) !important;
+}
+
+.dark-theme .deck-management-card {
+  background-color: #11151d !important;
+  border-color: #293142 !important;
+}
+
+.dark-theme .deck-requirement-card {
+  background-color: #151a24 !important;
+  border-color: #30394c !important;
+}
+
+.dark-theme .deck-management-card :is(.text-slate-900, .text-slate-800),
+.dark-theme .deck-requirement-card :is(.text-slate-900, .text-slate-800) {
+  color: #eef2ff !important;
+}
+
+.deck-quantity-button,
+.deck-quick-add-button {
+  width: clamp(2.5rem, calc(2.25rem + 0.6vw), 2.75rem);
+  height: clamp(2.5rem, calc(2.25rem + 0.6vw), 2.75rem);
+  min-width: clamp(2.5rem, calc(2.25rem + 0.6vw), 2.75rem);
+  min-height: clamp(2.5rem, calc(2.25rem + 0.6vw), 2.75rem);
 }
 
 .allocation-danger-action {
