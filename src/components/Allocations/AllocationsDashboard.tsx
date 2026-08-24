@@ -45,8 +45,16 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
   const allocRequirements = useMemo(() => {
     if (!allocDeck?.requirements) return [];
     return allocDeck.requirements
-      .map((r: any) => r.requirement || r)
-      .filter((r: any) => r && r.id);
+      .map((row: any) => {
+        const requirement = row.requirement || row;
+        const allocatedHere = row.ownership?.allocatedToThisDeck || 0;
+        return {
+          ...requirement,
+          card: row.card,
+          remainingNeeded: row.ownership?.remainingNeeded ?? Math.max(0, requirement.quantity - allocatedHere),
+        };
+      })
+      .filter((requirement: any) => requirement?.id && requirement.remainingNeeded > 0);
   }, [allocDeck]);
 
   const matchingCollectionItems = useMemo(() => {
@@ -55,11 +63,20 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
     return collection.filter((ci) => {
       if (ci.cardId !== req.cardId) return false;
       if (req.requirementMode === 'SPECIFIC_PRINTING' && req.preferredPrintingId) {
-        return ci.printingId === req.preferredPrintingId;
+        return ci.printingId === req.preferredPrintingId && (ci.availableQuantity ?? ci.quantity) > 0;
       }
-      return true;
+      return (ci.availableQuantity ?? ci.quantity) > 0;
     });
   }, [allocReqId, allocRequirements, collection]);
+
+  const selectedAllocRequirement = allocRequirements.find((requirement: any) => requirement.id === allocReqId);
+  const selectedCollectionItem = matchingCollectionItems.find((item) => item.id === allocCollectionItemId);
+  const maxAssignableQuantity = selectedAllocRequirement && selectedCollectionItem
+    ? Math.min(
+        selectedAllocRequirement.remainingNeeded,
+        selectedCollectionItem.availableQuantity ?? selectedCollectionItem.quantity
+      )
+    : 0;
 
   // Find cards allocated across 2+ decks, plus any allocated cards for release UI
   const sharedAllocatedItems = collection.filter(
@@ -89,11 +106,15 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
 
   const handleManualAllocate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!allocDeckId || !allocReqId || !allocCollectionItemId) return;
+    if (!allocDeckId || !allocReqId || !allocCollectionItemId || maxAssignableQuantity < 1) {
+      showMsg('No physical copies are currently assignable for that selection.', true);
+      return;
+    }
 
-    const res = await allocateToDeck(allocDeckId, allocReqId, allocCollectionItemId, allocQty);
+    const quantityToAllocate = Math.min(allocQty, maxAssignableQuantity);
+    const res = await allocateToDeck(allocDeckId, allocReqId, allocCollectionItemId, quantityToAllocate);
     if (res.success) {
-      showMsg(`Allocated ${allocQty} copy(s) to deck.`);
+      showMsg(`Allocated ${quantityToAllocate} copy(s) to deck.`);
       if (onRefreshAllData) onRefreshAllData();
     } else {
       showMsg(res.error || 'Allocate failed', true);
@@ -171,13 +192,14 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
             <span>Manual Allocate</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             <select
               value={allocDeckId}
               onChange={(e) => {
                 setAllocDeckId(e.target.value);
                 setAllocReqId('');
                 setAllocCollectionItemId('');
+                setAllocQty(1);
               }}
               className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
             >
@@ -194,18 +216,17 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
               onChange={(e) => {
                 setAllocReqId(e.target.value);
                 setAllocCollectionItemId('');
+                setAllocQty(1);
               }}
               className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
               disabled={!allocDeckId}
             >
-              <option value="">Requirement...</option>
+              <option value="">{allocRequirements.length > 0 ? 'Requirement...' : 'No unfilled requirements'}</option>
               {allocRequirements.map((r: any) => {
-                const cardName =
-                  allocDeck?.requirements?.find((x: any) => (x.requirement || x).id === r.id)?.card
-                    ?.name || r.cardId;
+                const cardName = r.card?.name || r.cardId;
                 return (
                   <option key={r.id} value={r.id}>
-                    {cardName} ×{r.quantity}
+                    {cardName} ({r.remainingNeeded} remaining)
                   </option>
                 );
               })}
@@ -213,11 +234,14 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
 
             <select
               value={allocCollectionItemId}
-              onChange={(e) => setAllocCollectionItemId(e.target.value)}
+              onChange={(e) => {
+                setAllocCollectionItemId(e.target.value);
+                setAllocQty(1);
+              }}
               className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
               disabled={!allocReqId}
             >
-              <option value="">Collection item...</option>
+              <option value="">{matchingCollectionItems.length > 0 ? 'Assignable copy...' : 'No free matching copies'}</option>
               {matchingCollectionItems.map((ci) => (
                 <option key={ci.id} value={ci.id}>
                   {ci.card?.name || ci.cardId} (avail {ci.availableQuantity ?? ci.quantity})
@@ -228,14 +252,16 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
             <input
               type="number"
               min={1}
-              value={allocQty}
-              onChange={(e) => setAllocQty(Math.max(1, Number(e.target.value) || 1))}
+              max={Math.max(1, maxAssignableQuantity)}
+              value={Math.min(allocQty, Math.max(1, maxAssignableQuantity))}
+              onChange={(e) => setAllocQty(Math.min(Math.max(1, Number(e.target.value) || 1), Math.max(1, maxAssignableQuantity)))}
+              disabled={maxAssignableQuantity < 1}
               className="bg-white border border-emerald-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900"
             />
 
             <button
               type="submit"
-              disabled={!allocDeckId || !allocReqId || !allocCollectionItemId}
+              disabled={!allocDeckId || !allocReqId || !allocCollectionItemId || maxAssignableQuantity < 1}
               className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-white font-black uppercase text-xs rounded-xl py-2 transition shadow-xs"
             >
               Allocate
@@ -250,7 +276,7 @@ export const AllocationsDashboard: React.FC<AllocationsDashboardProps> = ({
             <span>Move Physical Card Allocation Between Active Decks</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             <select
               value={sourceDeckId}
               onChange={(e) => setSourceDeckId(e.target.value)}

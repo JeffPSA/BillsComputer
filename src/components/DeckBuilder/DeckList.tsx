@@ -77,7 +77,7 @@ export const DeckList: React.FC<DeckListProps> = ({
             onClick={onOpenImportModal}
             className="px-3.5 py-2 bg-indigo-900 hover:bg-indigo-950 text-yellow-300 border border-indigo-500 text-xs font-black uppercase tracking-wider rounded-2xl transition shadow-sm"
           >
-            Import Limitless List
+            Import Deck List
           </button>
           <button
             onClick={onCreateNewDeck}
@@ -97,12 +97,14 @@ export const DeckList: React.FC<DeckListProps> = ({
             deck.totalAllocationMissingCards ?? Math.max(0, (deck.totalRequiredCards || 0) - (deck.totalAllocatedCards || 0));
           const collectionMissingCards =
             deck.totalCollectionMissingCards ?? reqs.reduce((sum: number, r: any) => sum + (r.ownership?.missing || 0), 0);
+          const hasCardsInOtherDecks = reqs.some((r: any) => (r.ownership?.allocatedToOtherDecks || 0) > 0);
+          const isBlockedByOtherDecks = reqs.some((r: any) => r.ownership?.status === 'ALLOCATED_ELSEWHERE');
 
           return (
             <div
               key={deck.id}
               onClick={() => onSelectDeck(deck.id)}
-              className="bg-white border border-slate-200 hover:border-indigo-400 rounded-3xl p-5 space-y-4 cursor-pointer transition-all shadow-sm group relative flex flex-col justify-between"
+              className="deck-management-card bg-white border border-slate-200 hover:border-indigo-400 rounded-3xl p-5 space-y-4 cursor-pointer transition-all shadow-sm group relative flex flex-col justify-between"
             >
               <div className="space-y-3">
                 {/* Header & Status */}
@@ -129,10 +131,25 @@ export const DeckList: React.FC<DeckListProps> = ({
 
                 {/* Ownership Badge */}
                 <div>
-                  {deck.isFullyOwned ? (
+                  {deck.status !== 'Active' ? (
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-xl">
+                      <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Activate Deck to Assign Cards</span>
+                    </div>
+                  ) : deck.isFullyOwned && hasCardsInOtherDecks ? (
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-blue-100 border border-blue-300 text-blue-800 text-xs font-bold rounded-xl">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-blue-700" />
+                      <span>🔵 Assignable • Also Used Elsewhere</span>
+                    </div>
+                  ) : deck.isFullyOwned ? (
                     <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-xl">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>🟢 Fully Owned in Collection</span>
+                      <span>🟢 All Requirements Assignable</span>
+                    </div>
+                  ) : isBlockedByOtherDecks ? (
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-rose-100 border border-rose-300 text-rose-800 text-xs font-bold rounded-xl">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-700" />
+                      <span>Cards in use by other decks</span>
                     </div>
                   ) : (
                     <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold rounded-xl">
@@ -170,9 +187,11 @@ export const DeckList: React.FC<DeckListProps> = ({
                   {reqs.slice(0, 4).map((r: any, idx: number) => {
                     const status = r.ownership?.status;
                     let badge = '🟢';
-                    if (status === 'PARTIALLY_OWNED') badge = '🟡';
-                    if (status === 'ALLOCATED_ELSEWHERE') badge = '🟠';
-                    if (status === 'NOT_OWNED') badge = '🔴';
+                    if (deck.status !== 'Active') badge = '⚪';
+                    else if ((r.ownership?.allocatedToOtherDecks || 0) > 0 && status === 'FULLY_OWNED') badge = '🔵';
+                    else if (status === 'PARTIALLY_OWNED') badge = '🟡';
+                    else if (status === 'ALLOCATED_ELSEWHERE') badge = '🟠';
+                    else if (status === 'NOT_OWNED') badge = '🔴';
 
                     return (
                       <div key={idx} className="flex items-center justify-between text-xs py-0.5 font-medium">
@@ -202,14 +221,14 @@ export const DeckList: React.FC<DeckListProps> = ({
                   <button
                     onClick={() => onAutoAllocate(deck.id)}
                     title="Auto-allocate unallocated cards from physical collection"
-                    className="p-2 bg-slate-100 hover:bg-yellow-400 hover:text-indigo-950 text-slate-700 rounded-xl border border-slate-200 transition"
+                    className="min-w-10 min-h-10 inline-flex items-center justify-center bg-slate-100 hover:bg-yellow-400 hover:text-indigo-950 text-slate-700 rounded-xl border border-slate-200 transition"
                   >
                     <Share2 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={(e) => handleCopyLimitlessText(deck, e)}
-                    title="Copy Limitless TCG Text Format"
-                    className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition"
+                    title="Copy deck list text"
+                    className="min-w-10 min-h-10 inline-flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition"
                   >
                     {copiedDeckId === deck.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
@@ -219,7 +238,7 @@ export const DeckList: React.FC<DeckListProps> = ({
                       setEditingDeck(deck);
                     }}
                     title="Deck Settings & Rename"
-                    className="p-2 bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-700 rounded-xl border border-slate-200 transition"
+                    className="min-w-10 min-h-10 inline-flex items-center justify-center bg-slate-100 hover:bg-indigo-600 hover:text-white text-slate-700 rounded-xl border border-slate-200 transition"
                   >
                     <Settings className="w-3.5 h-3.5" />
                   </button>
@@ -232,7 +251,7 @@ export const DeckList: React.FC<DeckListProps> = ({
                     }}
                     title="Delete Deck"
                     disabled={deletingDeckId === deck.id}
-                    className="p-2 bg-slate-100 hover:bg-rose-600 hover:text-white text-slate-500 rounded-xl border border-slate-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="min-w-10 min-h-10 inline-flex items-center justify-center bg-slate-100 hover:bg-rose-600 hover:text-white text-slate-500 rounded-xl border border-slate-200 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {deletingDeckId === deck.id ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />

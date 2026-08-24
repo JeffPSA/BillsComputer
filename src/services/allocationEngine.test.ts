@@ -105,6 +105,10 @@ const lucarioOwnership = calculateCardOwnershipForDeck(
 console.assert(lucarioOwnership.required === 4, 'Lucario requirement should be 4');
 console.assert(lucarioOwnership.allocatedToThisDeck === 2, 'Lucario allocated should be 2');
 console.assert(lucarioOwnership.availableInCollection === 0, 'Available unallocated in collection should be 0');
+console.assert(lucarioOwnership.remainingNeeded === 2, 'Lucario should still need 2 copies');
+console.assert(lucarioOwnership.assignableQuantity === 0, 'No copies should be assignable while all owned copies are allocated');
+console.assert(lucarioOwnership.canFullyAssignNow === false, 'Lucario cannot be fully assigned now');
+console.assert(lucarioOwnership.isSharedWithOtherDecks === true, 'Other-deck use should be exposed explicitly');
 console.assert(lucarioOwnership.missing === 2, 'Lucario missing should be 2');
 console.assert(lucarioOwnership.status === 'ALLOCATED_ELSEWHERE', 'Lucario ownership status should be ALLOCATED_ELSEWHERE');
 
@@ -122,8 +126,26 @@ const lucarioOwnershipWithInactiveDarkrai = calculateCardOwnershipForDeck(
 );
 
 console.assert(lucarioOwnershipWithInactiveDarkrai.availableInCollection === 4, 'Inactive Darkrai releases 4 copies to available pool');
+console.assert(lucarioOwnershipWithInactiveDarkrai.remainingNeeded === 2, 'Lucario should still need 2 copies');
+console.assert(lucarioOwnershipWithInactiveDarkrai.assignableQuantity === 2, 'Exactly the remaining 2 copies should be assignable');
+console.assert(lucarioOwnershipWithInactiveDarkrai.canFullyAssignNow === true, 'Lucario can be fully assigned now');
+console.assert(lucarioOwnershipWithInactiveDarkrai.isSharedWithOtherDecks === false, 'Inactive deck allocations are not active sharing');
 console.assert(lucarioOwnershipWithInactiveDarkrai.status === 'FULLY_OWNED', 'Lucario can now fully own its 4 copies');
 console.log('✅ Test 2 Passed: Deactivating Darkrai releases copies to available pool');
+
+// Test 2b: enough copies remain assignable, but another active deck is also using this card
+const sharedButAssignableOwnership = calculateCardOwnershipForDeck(
+  mockCardUltraBall,
+  reqLucarioUB,
+  mockDeckLucario,
+  [mockDeckDarkrai, mockDeckLucario],
+  collectionItems,
+  [{ id: 'a_shared', collectionItemId: 'ci_ub_6x', deckId: 'deck_darkrai', requirementId: 'req_darkrai_ub', quantity: 1 }]
+);
+console.assert(sharedButAssignableOwnership.assignableQuantity === 4, 'Four copies should still be assignable');
+console.assert(sharedButAssignableOwnership.canFullyAssignNow === true, 'Requirement can still be fully assigned');
+console.assert(sharedButAssignableOwnership.isSharedWithOtherDecks === true, 'Shared use must remain visible even when enough copies are free');
+console.log('✅ Test 2b Passed: shared-but-assignable inventory is distinct from exclusively free inventory');
 
 // Test 3: Multi-deck shortfalls (Darkrai needs 4, Lucario needs 4, Total required = 8, Owned = 6 -> Shortfall = 2)
 const shortfalls = calculateMultiDeckShortfalls(

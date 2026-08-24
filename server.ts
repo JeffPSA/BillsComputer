@@ -8,7 +8,7 @@ import {
   getPokemonCardById 
 } from './server/cardDataProvider';
 import { getDatabaseManager } from './server/database/index';
-import { syncAllCards, syncCardsForSet, syncIncremental, syncNewSetsAndCards, SyncProgress } from './server/cardSync';
+import { syncAllCards, syncCardsForSet, syncFailedSets, syncIncremental, syncNewSetsAndCards, SyncProgress } from './server/cardSync';
 
 // Load environment variables from .env file
 config();
@@ -57,7 +57,7 @@ if (!fs.existsSync(DATA_DIR)) {
 // Initialize database manager
 const dbManager = getDatabaseManager();
 
-type AdminSyncMode = 'incremental' | 'force' | 'sets-only' | 'single-set';
+type AdminSyncMode = 'incremental' | 'force' | 'sets-only' | 'single-set' | 'failed-only';
 interface AdminSyncJob {
   running: boolean;
   stopRequested?: boolean;
@@ -250,6 +250,7 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
         mode === 'force' ? 'Starting full resync...' :
         mode === 'sets-only' ? 'Finding new sets and syncing their cards...' :
         mode === 'single-set' ? `Starting set sync for ${setId}...` :
+        mode === 'failed-only' ? 'Retrying failed sets...' :
         'Starting incremental sync...',
       percent: 0,
     },
@@ -269,6 +270,7 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
     mode === 'force' ? syncAllCards(syncOptions) :
     mode === 'sets-only' ? syncNewSetsAndCards(syncOptions) :
     mode === 'single-set' && setId ? syncCardsForSet(setId, 250, syncOptions) :
+    mode === 'failed-only' ? syncFailedSets(syncOptions) :
     syncIncremental(syncOptions);
 
   syncPromise
@@ -494,6 +496,7 @@ async function startServer() {
         requestedMode === 'force' ? 'force' :
         requestedMode === 'sets-only' ? 'sets-only' :
         requestedMode === 'single-set' ? 'single-set' :
+        requestedMode === 'failed-only' ? 'failed-only' :
         'incremental';
 
       let setId: string | undefined;
@@ -514,6 +517,7 @@ async function startServer() {
           mode === 'force' ? 'Full sync started' :
           mode === 'sets-only' ? 'New-set scan started; any missing sets will be populated with card data' :
           mode === 'single-set' ? `Single-set sync started for ${setId}` :
+          mode === 'failed-only' ? 'Retrying failed sets only' :
           'Incremental sync started',
       });
     } catch (err: any) {
@@ -728,6 +732,66 @@ async function startServer() {
       console.error('[Server] Error in /api/cards:', err);
       res.status(500).json({ error: 'Internal server error', cards: [] });
     }
+  });
+
+  // GET /api/cards/:id/deck-usage (Read-only deck requirement and allocation summary)
+  app.get('/api/cards/:id/deck-usage', requireAuth, (req, res) => {
+    const cardId = req.params.id;
+    const db = readDb();
+    const card = db.cards.find((candidate) => candidate.id === cardId);
+
+    if (!card) {
+      return res.status(404).json({ error: 'Card not found' });
+    }
+
+    const matchingItems = db.collectionItems.filter((item) => item.cardId === cardId);
+    const matchingItemIds = new Set(matchingItems.map((item) => item.id));
+    const activeDeckIds = new Set(db.decks.filter((deck) => deck.status === 'Active').map((deck) => deck.id));
+    const totalOwned = matchingItems.reduce((sum, item) => sum + item.quantity, 0);
+    const totalAllocated = db.allocations
+      .filter((allocation) => activeDeckIds.has(allocation.deckId) && matchingItemIds.has(allocation.collectionItemId))
+      .reduce((sum, allocation) => sum + allocation.quantity, 0);
+
+    const deckUsage = db.decks
+      .map((deck) => {
+        const requirements = db.deckRequirements.filter(
+          (requirement) => requirement.deckId === deck.id && requirement.cardId === cardId
+        );
+        if (requirements.length === 0) return null;
+
+        const requirementIds = new Set(requirements.map((requirement) => requirement.id));
+        const allocatedQuantity = db.allocations
+          .filter(
+            (allocation) =>
+              allocation.deckId === deck.id &&
+              requirementIds.has(allocation.requirementId) &&
+              matchingItemIds.has(allocation.collectionItemId)
+          )
+          .reduce((sum, allocation) => sum + allocation.quantity, 0);
+
+        return {
+          deckId: deck.id,
+          deckName: deck.name,
+          deckVersion: deck.version,
+          deckStatus: deck.status,
+          requiredQuantity: requirements.reduce((sum, requirement) => sum + requirement.quantity, 0),
+          allocatedQuantity,
+        };
+      })
+      .filter(Boolean)
+      .sort((a: any, b: any) => {
+        if (a.deckStatus === 'Active' && b.deckStatus !== 'Active') return -1;
+        if (a.deckStatus !== 'Active' && b.deckStatus === 'Active') return 1;
+        return a.deckName.localeCompare(b.deckName);
+      });
+
+    res.json({
+      cardId,
+      totalOwned,
+      totalAllocated,
+      availableQuantity: Math.max(0, totalOwned - totalAllocated),
+      deckUsage,
+    });
   });
 
   // GET /api/cards/:id (Fetch card details by canonical ID e.g. 'sv1-196', 'xy1-4')
@@ -1294,6 +1358,16 @@ async function startServer() {
       const reqAllocations = db.allocations.filter((a) => a.deckId === id && a.requirementId === req.id);
       const allocatedQty = reqAllocations.reduce((sum, a) => sum + a.quantity, 0);
 
+      const matchingCollectionItems = db.collectionItems.filter((item) => {
+        if (item.cardId !== req.cardId) return false;
+        if (req.requirementMode === 'SPECIFIC_PRINTING' && req.preferredPrintingId) {
+          return item.printingId === req.preferredPrintingId;
+        }
+        return true;
+      });
+      const matchingCollectionItemIds = new Set(matchingCollectionItems.map((item) => item.id));
+      const totalOwnedQty = matchingCollectionItems.reduce((sum, item) => sum + item.quantity, 0);
+
       // Check where allocated cards are physically coming from
       const transferAlerts: { fromDeckName: string; count: number }[] = [];
       const collectionItemSources: { printingName: string; setCode: string; count: number; condition: string }[] = [];
@@ -1314,6 +1388,10 @@ async function startServer() {
       // Check if other active decks need to surrender allocated copies
       const activeOtherDeckIds = new Set(db.decks.filter((d) => d.id !== id && d.status === 'Active').map((d) => d.id));
       const otherDeckAllocations = db.allocations.filter((a) => activeOtherDeckIds.has(a.deckId) && db.collectionItems.some((ci) => ci.id === a.collectionItemId && ci.cardId === req.cardId));
+      const allocatedElsewhereQty = otherDeckAllocations
+        .filter((allocation) => matchingCollectionItemIds.has(allocation.collectionItemId))
+        .reduce((sum, allocation) => sum + allocation.quantity, 0);
+      const freeQty = Math.max(0, totalOwnedQty - allocatedQty - allocatedElsewhereQty);
       for (const oAlloc of otherDeckAllocations) {
         const otherDeck = db.decks.find((d) => d.id === oAlloc.deckId);
         if (otherDeck) {
@@ -1331,6 +1409,9 @@ async function startServer() {
         printing,
         requiredQty: req.quantity,
         allocatedQty,
+        totalOwnedQty,
+        freeQty,
+        allocatedElsewhereQty,
         missingQty: Math.max(0, req.quantity - allocatedQty),
         bulkCategory,
         collectionItemSources,
@@ -1855,7 +1936,7 @@ async function startServer() {
     const deckId = `deck_${Date.now()}`;
     const newDeck: Deck = {
       id: deckId,
-      name: deckName || 'Imported Limitless Deck',
+      name: deckName || 'Imported Deck',
       version: 'v1.0 Import',
       format: 'Standard',
       status: 'Active',

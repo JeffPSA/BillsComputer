@@ -250,6 +250,10 @@ export interface CalculatedCardOwnership {
   availableInCollection: number;
   totalOwnedInCollection: number;
   allocatedToOtherDecks: number;
+  remainingNeeded: number;
+  assignableQuantity: number;
+  canFullyAssignNow: boolean;
+  isSharedWithOtherDecks: boolean;
   missing: number;
   status: OwnershipStatus;
   requirementMode: RequirementMode;

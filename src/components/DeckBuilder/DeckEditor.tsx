@@ -162,7 +162,9 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
 
           <button
             onClick={() => onAutoAllocate(deck.id)}
-            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-black uppercase tracking-wider rounded-2xl transition"
+            disabled={deck.status !== 'Active'}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-45 disabled:cursor-not-allowed text-indigo-700 border border-indigo-200 text-xs font-black uppercase tracking-wider rounded-2xl transition"
+            title={deck.status === 'Active' ? 'Assign available physical cards' : 'Activate this deck before assigning physical cards'}
           >
             <Share2 className="w-3.5 h-3.5 stroke-[2.5]" />
             <span>Auto-Allocate Collection</span>
@@ -173,7 +175,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
             className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 text-xs font-bold rounded-2xl transition"
           >
             {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copiedText ? 'Copied!' : 'Copy Limitless Text'}</span>
+            <span>{copiedText ? 'Copied!' : 'Copy Deck Text'}</span>
           </button>
 
         </div>
@@ -261,7 +263,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
                     >
                       <Eye className="w-3.5 h-3.5" />
                     </button>
-                    <div className="flex items-center space-x-1">
+                    <div className="flex items-center gap-1">
                       {[1, 2, 4].map((qty) => (
                         <button
                           key={qty}
@@ -269,7 +271,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
                             onAddCardToDeck(card.id, qty);
                             setSearchQuery('');
                           }}
-                          className="px-1.5 py-0.5 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 font-black text-[11px] rounded-lg shadow-xs transition"
+                          className="deck-quick-add-button inline-flex items-center justify-center px-2 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 font-black text-xs rounded-xl shadow-xs transition"
                           title={`Add ${qty} copies`}
                         >
                           +{qty}
@@ -289,10 +291,13 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
         <span className="font-bold text-indigo-950">Physical Inventory Status:</span>
         <div className="flex flex-wrap items-center gap-4 text-[11px]">
           <span className="inline-flex items-center font-bold text-emerald-800">
-            🟢 Fully Owned & Unallocated
+            🟢 Enough free to assign
+          </span>
+          <span className="inline-flex items-center font-bold text-blue-800">
+            🔵 Assignable + used elsewhere
           </span>
           <span className="inline-flex items-center font-bold text-amber-900">
-            🟡 Partially Owned
+            🟡 Only partly assignable
           </span>
           <span className="inline-flex items-center font-bold text-rose-800">
             🟠 Owned but Allocated Elsewhere
@@ -303,8 +308,8 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
         </div>
       </div>
 
-      {/* Limitless Style Deck Columns */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Deck columns stay wide enough for quantity controls at intermediate widths. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {/* Column 1: Pokémon */}
         <DeckSection
           title="Pokémon"
@@ -314,6 +319,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
           onOpenCardDetail={setViewingCardModal}
+          deckStatus={deck.status}
         />
 
         {/* Column 2: Trainer */}
@@ -325,6 +331,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
           onOpenCardDetail={setViewingCardModal}
+          deckStatus={deck.status}
         />
 
         {/* Column 3: Energy */}
@@ -336,6 +343,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onRemove={onRemoveRequirement}
           onOpenPrintingModal={setSelectedPrintingReq}
           onOpenCardDetail={setViewingCardModal}
+          deckStatus={deck.status}
         />
       </div>
 
@@ -393,9 +401,10 @@ const DeckSection: React.FC<{
   onRemove: (id: string) => void;
   onOpenPrintingModal: (reqItem: any) => void;
   onOpenCardDetail: (cardDetail: { card: any; printing?: any }) => void;
-}> = ({ title, count, items, onUpdate, onRemove, onOpenPrintingModal, onOpenCardDetail }) => {
+  deckStatus: string;
+}> = ({ title, count, items, onUpdate, onRemove, onOpenPrintingModal, onOpenCardDetail, deckStatus }) => {
   return (
-    <div className="bg-white border border-slate-200 rounded-3xl p-5 space-y-3 shadow-sm">
+      <div className="deck-management-card bg-white border border-slate-200 rounded-3xl p-4 sm:p-5 space-y-3 shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 pb-2">
         <h2 className="font-black italic uppercase text-sm text-slate-900">{title}</h2>
         <span className="text-xs font-black px-2.5 py-0.5 bg-yellow-400 text-indigo-950 rounded-full">
@@ -410,27 +419,65 @@ const DeckSection: React.FC<{
           const prt = item.printing;
           const ownership = item.ownership;
 
+          const allocatedHere = ownership?.allocatedToThisDeck || 0;
+          const remainingNeeded = ownership?.remainingNeeded ?? Math.max(0, req.quantity - allocatedHere);
+          const freeQuantity = ownership?.availableInCollection || 0;
+          const assignableQuantity = deckStatus === 'Active'
+            ? (ownership?.assignableQuantity ?? Math.min(remainingNeeded, freeQuantity))
+            : 0;
+          const inOtherDecks = ownership?.allocatedToOtherDecks || 0;
+          const isShared = inOtherDecks > 0;
+
           let badgeIcon = '🟢';
-          let borderClass = 'border-slate-200';
-          if (ownership?.status === 'PARTIALLY_OWNED') {
+          let borderClass = 'border-emerald-300';
+          let statusTextClass = 'text-emerald-700';
+          let statusLabel = `${assignableQuantity} ready to assign`;
+
+          if (deckStatus !== 'Active') {
+            badgeIcon = '⚪';
+            borderClass = 'border-slate-300';
+            statusTextClass = 'text-slate-600';
+            statusLabel = 'Activate deck to assign cards';
+          } else if (remainingNeeded === 0 && isShared) {
+            badgeIcon = '🔵';
+            borderClass = 'border-blue-300';
+            statusTextClass = 'text-blue-800';
+            statusLabel = 'Assigned here + used elsewhere';
+          } else if (remainingNeeded === 0) {
+            statusLabel = 'Fully assigned to this deck';
+          } else if (assignableQuantity === remainingNeeded && isShared) {
+            badgeIcon = '🔵';
+            borderClass = 'border-blue-300';
+            statusTextClass = 'text-blue-800';
+            statusLabel = `${assignableQuantity} assignable now • ${inOtherDecks} in other decks`;
+          } else if (assignableQuantity > 0 && assignableQuantity < remainingNeeded) {
             badgeIcon = '🟡';
             borderClass = 'border-amber-300';
-          }
-          if (ownership?.status === 'ALLOCATED_ELSEWHERE') {
+            statusTextClass = 'text-amber-900';
+            statusLabel = `${assignableQuantity}/${remainingNeeded} assignable now`;
+          } else if (isShared) {
             badgeIcon = '🟠';
             borderClass = 'border-rose-300';
-          }
-          if (ownership?.status === 'NOT_OWNED') {
+            statusTextClass = 'text-rose-700';
+            statusLabel = `Not assignable • ${inOtherDecks} in other decks`;
+          } else if ((ownership?.totalOwnedInCollection || 0) === 0) {
             badgeIcon = '🔴';
-            borderClass = 'border-slate-200';
+            borderClass = 'border-slate-300';
+            statusTextClass = 'text-rose-700';
+            statusLabel = 'Not owned • 0 assignable';
+          } else if (assignableQuantity === 0) {
+            badgeIcon = '🟡';
+            borderClass = 'border-amber-300';
+            statusTextClass = 'text-amber-900';
+            statusLabel = 'No free copies assignable';
           }
 
           return (
             <div
               key={req.id}
-              className={`bg-slate-50 p-3.5 rounded-2xl border ${borderClass} space-y-2 hover:border-indigo-300 transition`}
+              className={`deck-requirement-card bg-slate-50 p-3.5 rounded-2xl border ${borderClass} space-y-3 hover:border-indigo-300 transition`}
             >
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div className="flex items-center space-x-2.5">
                   <button
                     onClick={() => onOpenCardDetail({ card, printing: prt })}
@@ -471,7 +518,7 @@ const DeckSection: React.FC<{
                 </div>
 
                 {/* Quantity Controls */}
-                <div className="flex items-center space-x-1 bg-white border border-slate-200 rounded-xl p-0.5 shadow-sm">
+                <div className="self-end sm:self-auto flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
                   <button
                     onClick={() => {
                       if (req.quantity > 1) {
@@ -480,30 +527,36 @@ const DeckSection: React.FC<{
                         onRemove(req.id);
                       }
                     }}
-                    className="p-1 hover:bg-slate-100 text-slate-700 rounded-lg transition"
+                    className="deck-quantity-button inline-flex items-center justify-center hover:bg-slate-100 text-slate-700 rounded-lg transition"
+                    aria-label={`Remove one ${card.name}`}
                   >
-                    <Minus className="w-3 h-3 stroke-[2.5]" />
+                    <Minus className="w-4 h-4 stroke-[2.5]" />
                   </button>
-                  <span className="text-xs font-bold font-mono px-1.5 text-slate-900">{req.quantity}</span>
+                  <span className="text-sm font-bold font-mono px-1.5 text-slate-900">{req.quantity}</span>
                   <button
                     onClick={() => onUpdate(req.id, req.quantity + 1)}
-                    className="p-1 hover:bg-slate-100 text-slate-700 rounded-lg transition"
+                    className="deck-quantity-button inline-flex items-center justify-center hover:bg-slate-100 text-slate-700 rounded-lg transition"
+                    aria-label={`Add one ${card.name}`}
                   >
-                    <Plus className="w-3 h-3 stroke-[2.5]" />
+                    <Plus className="w-4 h-4 stroke-[2.5]" />
                   </button>
                 </div>
               </div>
 
               {/* Inventory Breakdown Row */}
-              <div className="flex items-center justify-between text-[10px] text-slate-600 bg-slate-200/60 px-2.5 py-1 rounded-xl font-medium">
-                <span>Allocated: {ownership?.allocatedToThisDeck || 0}/{req.quantity}</span>
-                <span>Avail: {ownership?.availableInCollection || 0}</span>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-600 bg-slate-200/60 px-2.5 py-2 rounded-xl font-bold">
+                <span className={statusTextClass}>{badgeIcon} {statusLabel}</span>
+                <span>Owned: {ownership?.totalOwnedInCollection || 0}</span>
+                <span>Free: {ownership?.availableInCollection || 0}</span>
+                <span>In other decks: {ownership?.allocatedToOtherDecks || 0}</span>
+                <span>Assigned here: {ownership?.allocatedToThisDeck || 0}/{req.quantity}</span>
                 <button
                   onClick={() => onRemove(req.id)}
-                  className="text-rose-600 hover:text-rose-800 transition"
+                  className="deck-quantity-button ml-auto inline-flex items-center justify-center text-rose-600 hover:text-rose-800 hover:bg-rose-100 rounded-lg transition"
                   title="Remove from deck"
+                  aria-label={`Remove ${card.name} from deck`}
                 >
-                  <Trash2 className="w-3 h-3" />
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             </div>

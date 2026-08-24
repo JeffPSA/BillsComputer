@@ -192,14 +192,18 @@ export const AssembleDeckView: React.FC<AssembleDeckViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="text-right sm:text-right text-xs">
-                      <span
-                        className={`font-black ${
-                          item.allocatedQty >= item.requiredQty ? 'text-emerald-700' : 'text-amber-600'
-                        }`}
-                      >
-                        Allocated: {item.allocatedQty} / {item.requiredQty}
+                    <div className="flex flex-wrap sm:flex-col items-center sm:items-end gap-1.5 text-[10px] font-black">
+                      <span className={`px-2.5 py-1 rounded-full border ${item.allocatedQty >= item.requiredQty ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-amber-100 border-amber-300 text-amber-900'}`}>
+                        Assigned here: {item.allocatedQty}/{item.requiredQty}
                       </span>
+                      <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-700">
+                        Free: {item.freeQty || 0}
+                      </span>
+                      {(item.allocatedElsewhereQty || 0) > 0 && (
+                        <span className="px-2.5 py-1 rounded-full bg-rose-100 border border-rose-300 text-rose-800">
+                          In other decks: {item.allocatedElsewhereQty}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );

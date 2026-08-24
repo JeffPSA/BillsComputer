@@ -367,6 +367,16 @@ export async function fetchAdminHealth(): Promise<any> {
   return await res.json();
 }
 
+export async function fetchCardDeckUsage(cardId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/cards/${encodeURIComponent(cardId)}/deck-usage`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    return { totalOwned: 0, totalAllocated: 0, availableQuantity: 0, deckUsage: [] };
+  }
+  return await res.json();
+}
+
 export async function fetchCurrencySettings(): Promise<any> {
   const res = await fetch(`${API_BASE}/api/admin/settings/currency`, {
     headers: getAuthHeaders(),
@@ -384,7 +394,7 @@ export async function updateCurrencySettings(usdToZarRate: number): Promise<any>
 }
 
 export async function startAdminSync(
-  mode: 'incremental' | 'force' | 'sets-only' | 'single-set',
+  mode: 'incremental' | 'force' | 'sets-only' | 'single-set' | 'failed-only',
   options?: { setCode?: string }
 ): Promise<any> {
   const res = await fetch(`${API_BASE}/api/admin/sync`, {

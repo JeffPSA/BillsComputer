@@ -5,9 +5,12 @@ import {
   ChevronRight,
   Database,
   Eye,
+  Grid3X3,
   Loader2,
   Plus,
   Search,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { addWishlistItem, browseDatabaseCards, updateCollectionItem } from '../../services/api';
 import { formatZarFromUsd } from '../../utils/currency';
@@ -25,6 +28,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
   const [ownership, setOwnership] = useState('ALL');
   const [wishlist, setWishlist] = useState('ALL');
   const [page, setPage] = useState(1);
+  const [gridSize, setGridSize] = useState<0 | 1 | 2>(1);
   const [cards, setCards] = useState<any[]>([]);
   const [sets, setSets] = useState<any[]>([]);
   const [rarities, setRarities] = useState<string[]>([]);
@@ -37,6 +41,12 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
   const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const gridColumnsClass = [
+    'grid-cols-2 md:grid-cols-4 xl:grid-cols-6',
+    'grid-cols-2 md:grid-cols-3 xl:grid-cols-4',
+    'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3',
+  ][gridSize];
+  const gridImageClass = ['h-40', 'h-56', 'h-72'][gridSize];
 
   useEffect(() => {
     setPage(1);
@@ -281,7 +291,39 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="flex items-center justify-end gap-2">
+        <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-slate-500">
+          <Grid3X3 className="w-3.5 h-3.5" />
+          Grid size
+        </span>
+        <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setGridSize((size) => Math.max(0, size - 1) as 0 | 1 | 2)}
+            disabled={gridSize === 0}
+            className="min-w-10 min-h-10 inline-flex items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-35 transition"
+            title="Show more, smaller cards"
+            aria-label="Decrease browser card size"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <span className="min-w-16 text-center text-[10px] font-black uppercase text-slate-600">
+            {gridSize === 0 ? 'Small' : gridSize === 1 ? 'Medium' : 'Large'}
+          </span>
+          <button
+            type="button"
+            onClick={() => setGridSize((size) => Math.min(2, size + 1) as 0 | 1 | 2)}
+            disabled={gridSize === 2}
+            className="min-w-10 min-h-10 inline-flex items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-35 transition"
+            title="Show fewer, larger cards"
+            aria-label="Increase browser card size"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className={`grid ${gridColumnsClass} gap-4`}>
         {cards.map((card) => {
           const printing = card.printings?.[0];
           const ownershipKey = printing?.id || card.defaultPrintingId;
@@ -299,7 +341,7 @@ export const DatabaseCardBrowser: React.FC<{ onCollectionChanged: () => void }> 
                   src={getImageUrl(printing, card)}
                   alt={card.name}
                   onError={handleImageError}
-                  className="w-full h-56 object-contain bg-slate-100"
+                  className={`w-full ${gridImageClass} object-contain bg-slate-100 transition-all`}
                   referrerPolicy="no-referrer"
                 />
               </button>
