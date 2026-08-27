@@ -14,6 +14,8 @@ import {
   Loader2
 } from 'lucide-react';
 import { DeckSettingsModal } from './DeckSettingsModal';
+import { DeckExportModal } from './DeckExportModal';
+import { buildDeckText } from '../../utils/deckExport';
 
 interface DeckListProps {
   decks: any[];
@@ -39,21 +41,11 @@ export const DeckList: React.FC<DeckListProps> = ({
   const [copiedDeckId, setCopiedDeckId] = React.useState<string | null>(null);
   const [editingDeck, setEditingDeck] = useState<any | null>(null);
   const [deletingDeckId, setDeletingDeckId] = React.useState<string | null>(null);
+  const [exportingDeck, setExportingDeck] = useState<any | null>(null);
 
   const handleCopyLimitlessText = (deck: any, e: React.MouseEvent) => {
     e.stopPropagation();
-    const reqs = deck.requirements || [];
-    const lines = reqs.map((r: any) => {
-      const cardName = r.card?.name || 'Card';
-      const prt = r.printing;
-      if (prt && r.requirement.requirementMode === 'SPECIFIC_PRINTING') {
-        return `${r.requirement.quantity} ${cardName} ${prt.setCode} ${prt.cardNumber}`;
-      }
-      return `${r.requirement.quantity} ${cardName}`;
-    });
-
-    const fullText = `# ${deck.name} (${deck.version})\nFormat: ${deck.format}\n\n` + lines.join('\n');
-    navigator.clipboard.writeText(fullText);
+    navigator.clipboard.writeText(buildDeckText(deck, 'LIMITLESS'));
     setCopiedDeckId(deck.id);
     setTimeout(() => setCopiedDeckId(null), 2000);
   };
@@ -235,6 +227,16 @@ export const DeckList: React.FC<DeckListProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      setExportingDeck(deck);
+                    }}
+                    title="Export text or printable PDF"
+                    className="min-w-10 min-h-10 inline-flex items-center justify-center bg-slate-100 hover:bg-yellow-400 hover:text-indigo-950 text-slate-700 rounded-xl border border-slate-200 transition"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setEditingDeck(deck);
                     }}
                     title="Deck Settings & Rename"
@@ -293,6 +295,10 @@ export const DeckList: React.FC<DeckListProps> = ({
             onDeckDeleted?.();
           }}
         />
+      )}
+
+      {exportingDeck && (
+        <DeckExportModal deck={exportingDeck} onClose={() => setExportingDeck(null)} />
       )}
     </div>
   );

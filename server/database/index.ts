@@ -304,8 +304,25 @@ export class DatabaseManager {
     createSchema(this.db);
     assertPrintingInsertAligned(this.db);
     this.migrateAllocations();
+    this.migrateDeckRequirementPrintings();
     migrateAllocationUniqueness(this.db);
     console.log('[Database] SQLite database initialized');
+  }
+
+  /** Preserve a deck's exact-printing choice on databases created before this column existed. */
+  private migrateDeckRequirementPrintings(): void {
+    const columns = this.db.prepare('PRAGMA table_info(deck_requirements)').all() as { name: string }[];
+    if (!columns.some((column) => column.name === 'preferredPrintingId')) {
+      this.db.exec('ALTER TABLE deck_requirements ADD COLUMN preferredPrintingId TEXT');
+    }
+    // Older imports stored SPECIFIC_PRINTING without an actual printing id. Such a row
+    // cannot express an exact physical printing, so retain its intended any-printing behavior.
+    this.db.prepare(`
+      UPDATE deck_requirements
+      SET requirementMode = 'ANY_PRINTING'
+      WHERE requirementMode = 'SPECIFIC_PRINTING'
+        AND (preferredPrintingId IS NULL OR preferredPrintingId = '')
+    `).run();
   }
 
   /**
@@ -484,22 +501,21 @@ export class DatabaseManager {
     );
     const cardIds = [...new Set(deckRequirements.map((req) => req.cardId).filter(Boolean))];
     const cards = this.selectCardsByIds(cardIds);
-    const cardsById = new Map(cards.map((card) => [card.id, card]));
-    const printingIds = [
-      ...new Set(
-        deckRequirements
-          .map((req) => req.preferredPrintingId || cardsById.get(req.cardId)?.defaultPrintingId)
-          .filter((id): id is string => Boolean(id))
-      ),
-    ];
+    const placeholders = cardIds.map(() => '?').join(', ');
+    const printings = cardIds.length === 0
+      ? []
+      : (this.db
+          .prepare(`SELECT * FROM printings WHERE cardId IN (${placeholders}) ORDER BY setName COLLATE NOCASE, cardNumber, variant`)
+          .all(...cardIds) as any[]).map((row) => this.parsePrintingRow(row));
+    const cardsWithPrintings = this.attachPrintings(cards, printings);
 
     return {
       decks,
       deckRequirements,
       collectionItems,
       allocations,
-      cards,
-      printings: this.selectPrintingsByIds(printingIds),
+      cards: cardsWithPrintings,
+      printings,
     };
   }
 
@@ -792,8 +808,8 @@ export class DatabaseManager {
       if (requirements !== undefined) {
         this.db.prepare('DELETE FROM deck_requirements WHERE deckId = ?').run(deck.id);
         const insertRequirement = this.db.prepare(`
-          INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode, preferredPrintingId)
+          VALUES (?, ?, ?, ?, ?, ?)
         `);
         for (const requirement of requirements) {
           insertRequirement.run(
@@ -801,7 +817,8 @@ export class DatabaseManager {
             requirement.deckId,
             requirement.cardId,
             requirement.quantity,
-            requirement.requirementMode
+            requirement.requirementMode,
+            requirement.preferredPrintingId || null
           );
         }
       }
@@ -1567,19 +1584,21 @@ export class DatabaseManager {
 
         for (const req of data.deckRequirements) {
           this.db.prepare(`
-            INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO deck_requirements (id, deckId, cardId, quantity, requirementMode, preferredPrintingId)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               deckId = excluded.deckId,
               cardId = excluded.cardId,
               quantity = excluded.quantity,
-              requirementMode = excluded.requirementMode
+              requirementMode = excluded.requirementMode,
+              preferredPrintingId = excluded.preferredPrintingId
           `).run(
             req.id,
             req.deckId,
             req.cardId,
             req.quantity,
-            req.requirementMode
+            req.requirementMode,
+            req.preferredPrintingId || null
           );
         }
       }

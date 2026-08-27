@@ -42,7 +42,8 @@ import {
 
 export { validateAllocationInvariants };
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const SQLITE_DB_FILE = path.join(DATA_DIR, 'cards.db');
@@ -1062,6 +1063,13 @@ async function startServer() {
     }
     const cardsById = new Map(db.cards.map((card) => [card.id, card]));
     const printingsById = new Map(db.printings.map((printing) => [printing.id, printing]));
+    const collectionItemsById = new Map(db.collectionItems.map((item) => [item.id, item]));
+    const allocationsByRequirementId = new Map<string, Allocation[]>();
+    for (const allocation of db.allocations) {
+      const current = allocationsByRequirementId.get(allocation.requirementId) || [];
+      current.push(allocation);
+      allocationsByRequirementId.set(allocation.requirementId, current);
+    }
 
     const enrichedDecks = db.decks.map((deck) => {
       const reqs = requirementsByDeckId.get(deck.id) || [];
@@ -1080,11 +1088,29 @@ async function startServer() {
         );
 
         const printing = printingsById.get(req.preferredPrintingId || card.defaultPrintingId);
+        const physicalPrintingQuantities = new Map<string, number>();
+        for (const allocation of allocationsByRequirementId.get(req.id) || []) {
+          if (allocation.deckId !== deck.id) continue;
+          const collectionItem = collectionItemsById.get(allocation.collectionItemId);
+          if (!collectionItem || collectionItem.cardId !== req.cardId) continue;
+          physicalPrintingQuantities.set(
+            collectionItem.printingId,
+            (physicalPrintingQuantities.get(collectionItem.printingId) || 0) + allocation.quantity
+          );
+        }
+        const physicalPrintings = [...physicalPrintingQuantities.entries()]
+          .map(([printingId, quantity]) => ({
+            printing: printingsById.get(printingId),
+            printingId,
+            quantity,
+          }))
+          .filter((entry) => Boolean(entry.printing));
 
         return {
           requirement: req,
           card,
           printing,
+          physicalPrintings,
           ownership,
         };
       }).filter(Boolean);
@@ -1952,7 +1978,9 @@ async function startServer() {
         deckId,
         cardId: pr.cardId,
         quantity: pr.quantity,
-        requirementMode: pr.setCode ? 'SPECIFIC_PRINTING' : 'ANY_PRINTING',
+        // Imported set/number data identifies the logical card. It must not force the
+        // physical printing used by this deck; only an explicit Deck editor choice does.
+        requirementMode: 'ANY_PRINTING',
       });
     }
 
@@ -1988,8 +2016,9 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    const displayHost = HOST === '0.0.0.0' ? 'localhost' : HOST;
+    console.log(`Server running on http://${displayHost}:${PORT}`);
   });
 }
 
