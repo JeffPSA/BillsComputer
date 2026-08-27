@@ -9,6 +9,10 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        // The project lives in an iCloud-synced folder where Lucide's thousands of
+        // per-icon ESM files can become dataless placeholders. Use the materialized
+        // bundled entry so production builds cannot hang while resolving those files.
+        'lucide-react': path.resolve(__dirname, 'node_modules/lucide-react/dist/cjs/lucide-react.js'),
       },
     },
     server: {

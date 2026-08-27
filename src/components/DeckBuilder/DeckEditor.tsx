@@ -16,7 +16,8 @@ import {
   Settings,
   Loader2,
   AlertCircle,
-  Eye
+  Eye,
+  FileDown
 } from 'lucide-react';
 import { RequirementMode } from '../../types/tcg';
 import { searchCardsApi } from '../../services/api';
@@ -24,6 +25,8 @@ import { getImageUrl, handleImageError } from '../../utils/imageUtils';
 import { DeckSettingsModal } from './DeckSettingsModal';
 import { CardDetailModal } from '../CardDetailModal';
 import { formatZarFromUsd } from '../../utils/currency';
+import { DeckExportModal } from './DeckExportModal';
+import { buildDeckText } from '../../utils/deckExport';
 
 interface DeckEditorProps {
   deck: any;
@@ -55,6 +58,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
   const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
   const [copiedText, setCopiedText] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const reqs = deck.requirements || [];
 
@@ -94,16 +98,7 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
   }, [searchQuery]);
 
   const handleCopyLimitless = () => {
-    const lines = reqs.map((r: any) => {
-      const prt = r.printing;
-      if (prt && r.requirement.requirementMode === 'SPECIFIC_PRINTING') {
-        return `${r.requirement.quantity} ${r.card.name} ${prt.setCode} ${prt.cardNumber}`;
-      }
-      return `${r.requirement.quantity} ${r.card.name}`;
-    });
-
-    const fullText = `# ${deck.name} (${deck.version})\nFormat: ${deck.format}\n\n` + lines.join('\n');
-    navigator.clipboard.writeText(fullText);
+    navigator.clipboard.writeText(buildDeckText(deck, 'LIMITLESS'));
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2000);
   };
@@ -176,6 +171,14 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           >
             {copiedText ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copiedText ? 'Copied!' : 'Copy Deck Text'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowExportModal(true)}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-yellow-400 hover:bg-yellow-300 text-indigo-950 border border-yellow-500 text-xs font-black rounded-2xl transition"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            <span>Export / PDF</span>
           </button>
 
         </div>
@@ -286,24 +289,24 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
         )}
       </div>
 
-      {/* Ownership Legend */}
+      {/* Physical assignment legend */}
       <div className="bg-indigo-50/80 p-3.5 rounded-2xl border border-indigo-100 flex flex-wrap items-center justify-between gap-2 text-xs text-indigo-900 font-medium">
-        <span className="font-bold text-indigo-950">Physical Inventory Status:</span>
+        <span className="font-bold text-indigo-950">Physical card assignment:</span>
         <div className="flex flex-wrap items-center gap-4 text-[11px]">
           <span className="inline-flex items-center font-bold text-emerald-800">
-            🟢 Enough free to assign
+            🟢 Enough unassigned copies
           </span>
           <span className="inline-flex items-center font-bold text-blue-800">
-            🔵 Assignable + used elsewhere
+            🔵 Also assigned to another deck
           </span>
           <span className="inline-flex items-center font-bold text-amber-900">
-            🟡 Only partly assignable
+            🟡 Some copies still needed
           </span>
           <span className="inline-flex items-center font-bold text-rose-800">
-            🟠 Owned but Allocated Elsewhere
+            🟠 All owned copies are in other decks
           </span>
           <span className="inline-flex items-center font-bold text-slate-600">
-            🔴 Not Owned
+            🔴 No matching copy in collection
           </span>
         </div>
       </div>
@@ -388,6 +391,10 @@ export const DeckEditor: React.FC<DeckEditorProps> = ({
           onClose={() => setViewingCardModal(null)}
         />
       )}
+
+      {showExportModal && (
+        <DeckExportModal deck={deck} onClose={() => setShowExportModal(false)} />
+      )}
     </div>
   );
 };
@@ -431,45 +438,45 @@ const DeckSection: React.FC<{
           let badgeIcon = '🟢';
           let borderClass = 'border-emerald-300';
           let statusTextClass = 'text-emerald-700';
-          let statusLabel = `${assignableQuantity} ready to assign`;
+          let statusLabel = `${assignableQuantity} unassigned ${assignableQuantity === 1 ? 'copy' : 'copies'} available`;
 
           if (deckStatus !== 'Active') {
             badgeIcon = '⚪';
             borderClass = 'border-slate-300';
             statusTextClass = 'text-slate-600';
-            statusLabel = 'Activate deck to assign cards';
+            statusLabel = 'Activate this deck to assign physical cards';
           } else if (remainingNeeded === 0 && isShared) {
             badgeIcon = '🔵';
             borderClass = 'border-blue-300';
             statusTextClass = 'text-blue-800';
-            statusLabel = 'Assigned here + used elsewhere';
+            statusLabel = 'Fully assigned here; copies also serve other decks';
           } else if (remainingNeeded === 0) {
-            statusLabel = 'Fully assigned to this deck';
+            statusLabel = 'All required copies are assigned here';
           } else if (assignableQuantity === remainingNeeded && isShared) {
             badgeIcon = '🔵';
             borderClass = 'border-blue-300';
             statusTextClass = 'text-blue-800';
-            statusLabel = `${assignableQuantity} assignable now • ${inOtherDecks} in other decks`;
+            statusLabel = `${assignableQuantity} unassigned now • ${inOtherDecks} assigned to other decks`;
           } else if (assignableQuantity > 0 && assignableQuantity < remainingNeeded) {
             badgeIcon = '🟡';
             borderClass = 'border-amber-300';
             statusTextClass = 'text-amber-900';
-            statusLabel = `${assignableQuantity}/${remainingNeeded} assignable now`;
+            statusLabel = `${assignableQuantity} of ${remainingNeeded} needed copies are unassigned`;
           } else if (isShared) {
             badgeIcon = '🟠';
             borderClass = 'border-rose-300';
             statusTextClass = 'text-rose-700';
-            statusLabel = `Not assignable • ${inOtherDecks} in other decks`;
+            statusLabel = `All matching copies are assigned to other decks (${inOtherDecks})`;
           } else if ((ownership?.totalOwnedInCollection || 0) === 0) {
             badgeIcon = '🔴';
             borderClass = 'border-slate-300';
             statusTextClass = 'text-rose-700';
-            statusLabel = 'Not owned • 0 assignable';
+            statusLabel = 'No matching physical copy in collection';
           } else if (assignableQuantity === 0) {
             badgeIcon = '🟡';
             borderClass = 'border-amber-300';
             statusTextClass = 'text-amber-900';
-            statusLabel = 'No free copies assignable';
+            statusLabel = 'No unassigned matching copies';
           }
 
           return (
@@ -546,10 +553,10 @@ const DeckSection: React.FC<{
               {/* Inventory Breakdown Row */}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-600 bg-slate-200/60 px-2.5 py-2 rounded-xl font-bold">
                 <span className={statusTextClass}>{badgeIcon} {statusLabel}</span>
-                <span>Owned: {ownership?.totalOwnedInCollection || 0}</span>
-                <span>Free: {ownership?.availableInCollection || 0}</span>
-                <span>In other decks: {ownership?.allocatedToOtherDecks || 0}</span>
-                <span>Assigned here: {ownership?.allocatedToThisDeck || 0}/{req.quantity}</span>
+                <span>In collection: {ownership?.totalOwnedInCollection || 0}</span>
+                <span>Unassigned: {ownership?.availableInCollection || 0}</span>
+                <span>Other decks: {ownership?.allocatedToOtherDecks || 0}</span>
+                <span>This deck: {ownership?.allocatedToThisDeck || 0}/{req.quantity}</span>
                 <button
                   onClick={() => onRemove(req.id)}
                   className="deck-quantity-button ml-auto inline-flex items-center justify-center text-rose-600 hover:text-rose-800 hover:bg-rose-100 rounded-lg transition"
@@ -601,7 +608,7 @@ const PrintingSelectorModal: React.FC<{
             <div>
               <div className="text-xs font-bold text-indigo-900">Any Compatible Printing</div>
               <div className="text-[11px] text-slate-500 font-medium">
-                Any legal owned copy of {card.name} satisfy this requirement.
+                Any legal owned copy of {card.name} can satisfy this requirement.
               </div>
             </div>
             <span className="text-xs font-black text-indigo-700 bg-indigo-100 px-2.5 py-0.5 rounded-full">Default</span>

@@ -473,13 +473,11 @@ function testSpecificPrintingIdentity() {
     throw new Error(`Expected quantity 2, got ${engineAllocs[0].quantity}`);
   }
 
-  // Persistence idempotency for that identity (preferredPrintingId is not stored in SQLite
-  // deck_requirements today — engine correctness is covered above; here we persist the
-  // resulting rows and ensure a second write/reconcile does not duplicate them).
+  // Persistence idempotency for that identity, including its exact-printing preference.
   withTempDb((manager) => {
     manager.writeDb(
       emptyDbPayload({
-        deckRequirements: [{ ...reqSpecific, preferredPrintingId: undefined }],
+        deckRequirements: [reqSpecific],
         collectionItems: [collectionItem, collectionItemGold],
         allocations: engineAllocs,
       })
@@ -487,11 +485,14 @@ function testSpecificPrintingIdentity() {
 
     let db = manager.readDb();
     assertNoDuplicateIdentities(db.allocations, 'testSpecificPrintingIdentity-persisted');
+    if (db.deckRequirements[0]?.preferredPrintingId !== reqSpecific.preferredPrintingId) {
+      throw new Error('SPECIFIC_PRINTING preferred printing must persist in SQLite');
+    }
 
     // Re-write same allocations — reconciliation must not duplicate
     manager.writeDb({
       ...emptyDbPayload({
-        deckRequirements: [{ ...reqSpecific, preferredPrintingId: undefined }],
+        deckRequirements: [reqSpecific],
         collectionItems: [collectionItem, collectionItemGold],
       }),
       allocations: db.allocations,

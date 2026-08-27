@@ -107,6 +107,7 @@ export function createSchema(db: SQLiteDatabase): void {
       cardId TEXT NOT NULL,
       quantity INTEGER NOT NULL,
       requirementMode TEXT NOT NULL,
+      preferredPrintingId TEXT,
       FOREIGN KEY (deckId) REFERENCES decks(id) ON DELETE CASCADE,
       FOREIGN KEY (cardId) REFERENCES cards(id) ON DELETE CASCADE
     )

@@ -26,22 +26,29 @@ import { formatZarFromUsd } from '../../utils/currency';
 interface CollectionManagerProps {
   collection: any[];
   allCards: any[];
+  decks: any[];
   onUpdateItem: (item: any) => void;
   onOpenQuickAdd: () => void;
+  onAllocationsChanged: () => Promise<void>;
 }
 
 export const CollectionManager: React.FC<CollectionManagerProps> = ({
   collection,
   allCards,
+  decks,
   onUpdateItem,
   onOpenQuickAdd,
+  onAllocationsChanged,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [supertypeFilter, setSupertypeFilter] = useState('ALL');
   const [availabilityFilter, setAvailabilityFilter] = useState('ALL');
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [cardZoom, setCardZoom] = useState<0 | 1 | 2>(1);
-  const [viewingCardModal, setViewingCardModal] = useState<{ card: any; printing?: any } | null>(null);
+  const [viewingCollectionItemId, setViewingCollectionItemId] = useState<string | null>(null);
+  const viewingCollectionItem = viewingCollectionItemId
+    ? collection.find((item) => item.id === viewingCollectionItemId)
+    : null;
 
   // Metrics
   const totalOwnedCount = collection.reduce((sum, item) => sum + item.quantity, 0);
@@ -248,7 +255,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
                 className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:border-indigo-300 transition"
               >
                 <button
-                  onClick={() => card && setViewingCardModal({ card, printing: prt })}
+                  onClick={() => card && setViewingCollectionItemId(item.id)}
                   className="block w-full bg-slate-100"
                   title="Open card detail"
                 >
@@ -264,7 +271,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
                 <div className="p-3.5 space-y-3">
                   <div className="space-y-1 min-h-14">
                     <button
-                      onClick={() => card && setViewingCardModal({ card, printing: prt })}
+                      onClick={() => card && setViewingCollectionItemId(item.id)}
                       className="text-left font-black text-sm text-slate-900 hover:text-indigo-700 transition line-clamp-2"
                     >
                       {card?.name || 'Unknown Card'}
@@ -361,7 +368,7 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
                     <td className="py-3.5 px-4">
                       <div
                         className="flex items-center space-x-3 cursor-pointer group"
-                        onClick={() => card && setViewingCardModal({ card, printing: prt })}
+                        onClick={() => card && setViewingCollectionItemId(item.id)}
                       >
                         <img
                           src={getImageUrl(prt, card)}
@@ -463,12 +470,15 @@ export const CollectionManager: React.FC<CollectionManagerProps> = ({
       </div>
       )}
 
-      {viewingCardModal && (
+      {viewingCollectionItem?.card && (
         <CardDetailModal
-          card={viewingCardModal.card}
-          printing={viewingCardModal.printing}
-          allPrintings={viewingCardModal.card.printings}
-          onClose={() => setViewingCardModal(null)}
+          card={viewingCollectionItem.card}
+          printing={viewingCollectionItem.printing}
+          allPrintings={viewingCollectionItem.card.printings}
+          collectionItem={viewingCollectionItem}
+          decks={decks}
+          onAllocationsChanged={onAllocationsChanged}
+          onClose={() => setViewingCollectionItemId(null)}
         />
       )}
     </div>

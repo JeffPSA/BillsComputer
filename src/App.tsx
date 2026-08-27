@@ -380,8 +380,10 @@ export default function App() {
               <CollectionManager
                 collection={collection}
                 allCards={allCards}
+                decks={decks}
                 onUpdateItem={handleUpdateCollectionItem}
                 onOpenQuickAdd={() => setShowQuickAddModal(true)}
+                onAllocationsChanged={refreshAllData}
               />
             )}
 

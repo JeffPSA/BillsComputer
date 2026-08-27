@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "./App.tsx";
+@source "./components";
 
 :root {
   color-scheme: light;
