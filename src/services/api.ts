@@ -6,7 +6,8 @@ import {
   StoreProfile,
   Acquisition,
   MarketplaceListing,
-  ShoppingOptimizationResult
+  ShoppingOptimizationResult,
+  StoreShoppingListResult
 } from '../types/tcg';
 
 const API_BASE = '';
@@ -455,6 +456,16 @@ export async function fetchShoppingOptimization(mode: 'CHEAPEST_TOTAL' | 'FEWEST
   const res = await fetch(`${API_BASE}/api/marketplace/optimize?mode=${mode}`, {
     headers: getAuthHeaders(),
   });
+  return await res.json();
+}
+
+export async function fetchBobShopShoppingList(): Promise<StoreShoppingListResult> {
+  const res = await fetch(`${API_BASE}/api/shopping-list/bob-shop`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error('Unable to load the Bob Shop shopping list');
+  }
   return await res.json();
 }
 

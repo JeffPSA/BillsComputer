@@ -33,11 +33,13 @@ import {
   autoAllocateDeck,
   resolveBulkCategoryForCard
 } from './src/services/allocationEngine';
+import { buildBobShopShoppingList } from './src/services/shoppingList';
 import { resolveCardForImport } from './server/localCardSearch';
 import {
   validateAllocationInvariants,
   applyManualAllocate,
   applyReleaseAllocation,
+  removeIncompatibleDeckAllocations,
 } from './server/allocationIntegrity';
 
 export { validateAllocationInvariants };
@@ -1182,13 +1184,16 @@ async function startServer() {
     if (Array.isArray(requirements)) {
       db.deckRequirements = db.deckRequirements.filter((r) => r.deckId !== deck.id);
       for (const r of requirements) {
+        const requirementMode = r.requirementMode === 'SPECIFIC_PRINTING' && r.preferredPrintingId
+          ? 'SPECIFIC_PRINTING'
+          : 'ANY_PRINTING';
         db.deckRequirements.push({
           id: r.id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           deckId: deck.id,
           cardId: r.cardId,
           quantity: Math.max(1, Number(r.quantity || 1)),
-          requirementMode: r.requirementMode || 'ANY_PRINTING',
-          preferredPrintingId: r.preferredPrintingId,
+          requirementMode,
+          preferredPrintingId: requirementMode === 'SPECIFIC_PRINTING' ? r.preferredPrintingId : undefined,
         });
       }
       deckRequirementsForSave = db.deckRequirements.filter((r) => r.deckId === deck.id);
@@ -1196,6 +1201,7 @@ async function startServer() {
       // Cleanup orphaned allocations for this deck
       const validReqIds = new Set(db.deckRequirements.filter((r) => r.deckId === deck.id).map((r) => r.id));
       db.allocations = db.allocations.filter((a) => a.deckId !== deck.id || validReqIds.has(a.requirementId));
+      db.allocations = removeIncompatibleDeckAllocations(db, deck.id);
 
       // CRITICAL FIX: Do NOT auto-allocate on deck creation/import
       // Allocation should only happen via explicit user action (auto-allocate endpoint)
@@ -1881,6 +1887,18 @@ async function startServer() {
       selectedSellersCount: sellersUsed.size,
       items,
     });
+  });
+
+  // GET /api/shopping-list/bob-shop (Real Bob Shop search list; no simulated listings)
+  app.get('/api/shopping-list/bob-shop', requireAuth, (_req, res) => {
+    const db = dbManager.getDeckContext();
+    res.json(buildBobShopShoppingList(
+      db.decks,
+      db.deckRequirements,
+      db.collectionItems,
+      db.cards,
+      db.printings
+    ));
   });
 
   // POST /api/import-export/deck (Limitless TCG format parser)
