@@ -287,3 +287,22 @@ export interface ShoppingOptimizationResult {
     listing: MarketplaceListing;
   }[];
 }
+
+export interface StoreShoppingListItem {
+  key: string;
+  cardId: string;
+  cardName: string;
+  requirementMode: RequirementMode;
+  preferredPrintingId?: string;
+  printingString: string;
+  requiredQty: number;
+  searchQuery: string;
+  searchUrl: string;
+}
+
+export interface StoreShoppingListResult {
+  marketplace: 'Bob Shop';
+  totalMissingCards: number;
+  uniqueItems: number;
+  items: StoreShoppingListItem[];
+}

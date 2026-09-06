@@ -239,6 +239,8 @@ Tasks:
 - Done: freeze feature work and complete a read-only regression audit of SQLite integrity, orphan relationships, allocation invariants, every important read-only API, all navigation sections, the Deck printing popup, Deck Export panel, and Collection allocation detail. No audit action changed the live database.
 - Done: test the new startup migration against a temporary copy of the August 23 backup. It preserved all 3 decks, 71 requirement identities, 21 collection items, and 14 allocations exactly; its only data transformation was the planned conversion of legacy imported requirements without a saved printing id to `ANY_PRINTING`.
 - Done: confirm the historical `AnchorsAway PT2` difference was intentional; the user deleted that test deck after the August 23 backup. No restoration or merge is needed.
+- Done: fix the reported Any/Specific printing transition bug. Selecting Any now clears the hidden preferred-printing id, and changing to an exact printing releases allocation rows that do not match the new printing instead of leaving a misleading stale “found” state.
+- Pending data repair: the reported Shaymin DRI example exposed an incomplete Destined Rivals catalogue, not only an allocation-display issue. The live database currently contains 3 DRI printing rows for a set whose metadata reports 244 cards, and Shaymin DRI is absent. Diagnose why the completed sync metadata did not flag the partial set, then repair DRI through the safe individual-set sync workflow after taking a backup.
 - Pending: visually verify the final print dialog/PDF output in the desktop browser during the next safe local app run.
 
 ## Phase 12: Deck Activity History
@@ -257,6 +259,24 @@ Tasks:
 - Add read-only activity views on the Deck and Admin screens with deck/action/date filters.
 - Add regression coverage proving read-only actions create no log entries and destructive deck actions remain traceable.
 - Keep automatic restore/undo out of this phase; recovery should continue to use explicit SQLite backups until a separately designed safe undo workflow exists.
+
+## Phase 13: Shopping List — Bob Shop First
+
+Status: done
+
+Goal: make one store's shopping workflow trustworthy end to end before applying the pattern to other marketplaces.
+
+Tasks:
+
+- Done: replace the simulated multi-marketplace optimizer UI with a Bob Shop-focused shopping list.
+- Done: calculate missing quantities from active deck requirements and the physical collection without inventing listings, stock, sellers, prices, or shipping.
+- Done: respect exact-printing requirements by reserving owned copies of that printing before using remaining copies for Any Printing requirements.
+- Done: create a real Bob Shop search link for every missing card, including set code and collector number when an exact printing is required.
+- Done: add filtering, refresh, copy-list, CSV export, and local card-detail access.
+- Done: add regression coverage for active/inactive decks, exact-printing shortages, Any Printing surplus use, and Bob Shop link generation.
+- Done: manually verify the generated link format against live Bob Shop searches. `Shaymin DRI 10` returned the exact Destined Rivals card, and `Boss's Orders PAL 172` handled punctuation and returned the expected Paldea Evolved printing.
+- Later: decide whether seller grouping, cart tracking, or price capture is worthwhile after the Bob Shop search-list workflow has been used in practice.
+- Later: reuse the verified store adapter pattern for Pokeverse and PokeBulk.
 
 ## Later: Database Card Browser
 
@@ -315,11 +335,12 @@ Notes:
 
 ## Current Execution Order
 
-1. Finish Phase 11 by visually checking the printable deck-list/PDF output during the next safe local app run.
-2. Implement Phase 12 Deck Activity History as the next reliability feature before lower-priority feature work.
-3. Finish the remaining Phase 1 search-loading behavior only if stale/unstable results are still observable in normal use.
-4. Collect hosted endpoint timings for Phase 9 only if the 2-core/4 GB deployment still feels slow after the completed targeted-write work.
-5. Test Phase 10 against the real home dashboard client once that client exists.
-6. Investigate the deferred PBL/Reverse Holo Browser completeness issue.
-7. Later: add automatic USD-to-ZAR lookup after choosing a reliable source and fallback policy.
-8. Later: add deck value totals based on printing values and required quantities.
+1. Back up the live database, diagnose why the Destined Rivals sync is only partial, and safely resync DRI before retesting the Shaymin exact-printing workflow.
+2. Finish Phase 11 by visually checking the printable deck-list/PDF output during the next safe local app run.
+3. Implement Phase 12 Deck Activity History as the next reliability feature before lower-priority feature work.
+4. Finish the remaining Phase 1 search-loading behavior only if stale/unstable results are still observable in normal use.
+5. Collect hosted endpoint timings for Phase 9 only if the 2-core/4 GB deployment still feels slow after the completed targeted-write work.
+6. Test Phase 10 against the real home dashboard client once that client exists.
+7. Investigate the deferred PBL/Reverse Holo Browser completeness issue.
+8. Later: add automatic USD-to-ZAR lookup after choosing a reliable source and fallback policy.
+9. Later: add deck value totals based on printing values and required quantities.

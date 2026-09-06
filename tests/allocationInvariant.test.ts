@@ -1,7 +1,9 @@
+import assert from 'node:assert';
 import {
   validateAllocationInvariants,
   applyManualAllocate,
   applyReleaseAllocation,
+  removeIncompatibleDeckAllocations,
   AllocationDbSlice,
 } from '../server/allocationIntegrity';
 import {
@@ -139,10 +141,37 @@ function testReleaseReducesThenDeletes() {
   console.log('✅ (c) release reduces then deletes the row');
 }
 
+function testExactPrintingChangeReleasesIncompatibleAllocation() {
+  const db = baseDb({
+    deckRequirements: [{
+      id: 'req_inv_1',
+      deckId: 'deck_inv_1',
+      cardId: 'card_inv_1',
+      quantity: 4,
+      requirementMode: 'SPECIFIC_PRINTING',
+      preferredPrintingId: 'prt_inv_2',
+    }],
+    collectionItems: [
+      { id: 'ci_inv_1', cardId: 'card_inv_1', printingId: 'prt_inv_1', quantity: 4, condition: 'NM', language: 'English' },
+      { id: 'ci_inv_2', cardId: 'card_inv_1', printingId: 'prt_inv_2', quantity: 4, condition: 'NM', language: 'English' },
+    ],
+    allocations: [
+      { id: 'wrong', deckId: 'deck_inv_1', requirementId: 'req_inv_1', collectionItemId: 'ci_inv_1', quantity: 2, isLocked: true },
+      { id: 'right', deckId: 'deck_inv_1', requirementId: 'req_inv_1', collectionItemId: 'ci_inv_2', quantity: 2, isLocked: true },
+    ],
+  });
+
+  const allocations = removeIncompatibleDeckAllocations(db, 'deck_inv_1');
+  assert.strictEqual(allocations.some((allocation) => allocation.id === 'wrong'), false);
+  assert.strictEqual(allocations.some((allocation) => allocation.id === 'right'), true);
+  console.log('✅ (d) exact-printing changes release stale incompatible allocation rows');
+}
+
 try {
   testDetectsOverAllocation();
   testAllocateBeyondAvailableRejected();
   testReleaseReducesThenDeletes();
+  testExactPrintingChangeReleasesIncompatibleAllocation();
   console.log('--- ALL ALLOCATION INVARIANT TESTS PASSED ---');
 } catch (error) {
   console.error('❌ allocationInvariant failed:', error);

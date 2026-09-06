@@ -219,7 +219,11 @@ export default function App() {
           cardId: r.card.id,
           quantity,
           requirementMode: mode || r.requirement.requirementMode,
-          preferredPrintingId: preferredPrintingId !== undefined ? preferredPrintingId : r.requirement.preferredPrintingId,
+          preferredPrintingId: mode === 'ANY_PRINTING'
+            ? undefined
+            : preferredPrintingId !== undefined
+              ? preferredPrintingId
+              : r.requirement.preferredPrintingId,
         };
       }
       return {

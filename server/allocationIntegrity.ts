@@ -22,6 +22,37 @@ export interface InvariantResult {
 }
 
 /**
+ * Releases target-deck allocation rows that no longer satisfy their requirement.
+ * This is used when a requirement changes from any printing to an exact printing,
+ * or when its selected exact printing changes.
+ */
+export function removeIncompatibleDeckAllocations(
+  db: AllocationDbSlice,
+  deckId: string
+): Allocation[] {
+  const requirementsById = new Map(
+    db.deckRequirements
+      .filter((requirement) => requirement.deckId === deckId)
+      .map((requirement) => [requirement.id, requirement])
+  );
+  const collectionItemsById = new Map(db.collectionItems.map((item) => [item.id, item]));
+
+  return db.allocations.filter((allocation) => {
+    if (allocation.deckId !== deckId) return true;
+
+    const requirement = requirementsById.get(allocation.requirementId);
+    const collectionItem = collectionItemsById.get(allocation.collectionItemId);
+    if (!requirement || !collectionItem || collectionItem.cardId !== requirement.cardId) return false;
+
+    return !(
+      requirement.requirementMode === 'SPECIFIC_PRINTING' &&
+      requirement.preferredPrintingId &&
+      collectionItem.printingId !== requirement.preferredPrintingId
+    );
+  });
+}
+
+/**
  * For every collectionItem: sum(all allocation.quantity) <= item.quantity.
  * Reports deck names on violation.
  */
