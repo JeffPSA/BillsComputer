@@ -3,12 +3,13 @@ import path from 'path';
 import { LogicalCard, CardPrinting, CardSet } from '../src/types/tcg';
 import { fetchPokemonTcgSets, searchPokemonTcgSetCards, transformApiSetToSet } from './cardDataProvider';
 import { getDatabaseManager } from './database/index';
+import { sanitizeRoutineError, uniqueSetQueue } from './weeklyRoutineState';
 
 // Load environment variables
 config();
 
 // Sync statistics tracking
-interface SyncStats {
+export interface SyncStats {
   setsSynced: number;
   cardsSynced: number;
   newCards: number;
@@ -25,6 +26,9 @@ interface SyncStats {
   setSyncFailed: boolean;
   stopped: boolean;
   duration: number;
+  setsAttempted: number;
+  setsCompleted: number;
+  error?: string;
 }
 
 type UpsertAction = 'new' | 'updated' | 'unchanged';
@@ -65,6 +69,8 @@ function createStats(): SyncStats {
     setSyncFailed: false,
     stopped: false,
     duration: 0,
+    setsAttempted: 0,
+    setsCompleted: 0,
   };
 }
 
@@ -346,7 +352,7 @@ export async function syncNewSetsAndCards(options?: SyncOptions): Promise<SyncSt
       return stats;
     }
 
-    const apiSets = await fetchPokemonTcgSets();
+    const apiSets = await fetchPokemonTcgSets({ throwOnFailure: true });
     const dbManager = getDatabaseManager();
     const db = dbManager.readDb();
 
@@ -357,14 +363,6 @@ export async function syncNewSetsAndCards(options?: SyncOptions): Promise<SyncSt
 
     if (!db.sets) {
       db.sets = [];
-    }
-
-    if (apiSets.length === 0) {
-      console.warn('[CardSync] New set scan skipped: API returned no sets; preserving existing set metadata');
-      stats.setSyncFailed = true;
-      recordFinalCounts(stats);
-      stats.duration = Date.now() - startTime;
-      return stats;
     }
 
     const existingSetIds = new Set(db.sets.map((set: CardSet) => set.id.toLowerCase()));
@@ -421,7 +419,13 @@ export async function syncNewSetsAndCards(options?: SyncOptions): Promise<SyncSt
       return stats;
     }
 
-    if (newSets.length === 0) {
+    const queuedFailedSetIds: string[] = Array.isArray(db.syncMetadata?.failedSetIds)
+      ? db.syncMetadata.failedSetIds.filter((setId: unknown): setId is string => typeof setId === 'string')
+      : [];
+    const setIdsToSync = uniqueSetQueue(newSets.map((set) => set.id), queuedFailedSetIds);
+    const remainingFailedSetIds = new Set<string>(queuedFailedSetIds);
+
+    if (setIdsToSync.length === 0) {
       stats.duration = Date.now() - startTime;
       reportProgress(options, {
         phase: 'complete',
@@ -434,38 +438,48 @@ export async function syncNewSetsAndCards(options?: SyncOptions): Promise<SyncSt
       return stats;
     }
 
-    for (const [idx, set] of newSets.entries()) {
+    for (const [idx, setId] of setIdsToSync.entries()) {
       if (syncShouldStop(options)) {
         stats.stopped = true;
+        setIdsToSync.slice(idx).forEach((pendingSetId) => remainingFailedSetIds.add(pendingSetId));
         break;
       }
 
       reportProgress(options, {
         phase: 'cards',
-        message: `Syncing cards for new set ${set.name}`,
-        currentSetId: set.id,
-        currentSetName: set.name,
+        message: `Syncing cards for ${db.sets.find((set: CardSet) => set.id === setId)?.name || setId}`,
+        currentSetId: setId,
+        currentSetName: db.sets.find((set: CardSet) => set.id === setId)?.name,
         currentSetIndex: idx + 1,
-        totalSets: newSets.length,
+        totalSets: setIdsToSync.length,
         cardsSynced: stats.cardsSynced,
         setsSynced: stats.setsSynced,
-        percent: Math.round(20 + ((idx + 1) / Math.max(newSets.length, 1)) * 80),
+        percent: Math.round(20 + ((idx + 1) / Math.max(setIdsToSync.length, 1)) * 80),
       });
 
-      const cardStats = await syncCardsForSet(set.id, 250, options);
+      stats.setsAttempted++;
+      const cardStats = await syncCardsForSet(setId, 250, options);
       mergeStats(stats, cardStats);
+      if (!cardStats.stopped && !cardStats.failedSetIds.includes(setId)) {
+        remainingFailedSetIds.delete(setId);
+        stats.setsCompleted++;
+      } else {
+        remainingFailedSetIds.add(setId);
+      }
       if (cardStats.stopped) {
         stats.stopped = true;
+        setIdsToSync.slice(idx).forEach((pendingSetId) => remainingFailedSetIds.add(pendingSetId));
         break;
       }
     }
 
+    stats.failedSetIds = Array.from(remainingFailedSetIds);
     persistFailedSetIds(stats.failedSetIds);
     recordFinalCounts(stats);
     stats.duration = Date.now() - startTime;
     reportProgress(options, {
       phase: stats.stopped ? 'stopped' : 'complete',
-      message: stats.stopped ? 'New set sync stopped' : `Synced ${newSets.length} new set(s)`,
+      message: stats.stopped ? 'Weekly set sync stopped' : `Checked ${newSets.length} new and ${queuedFailedSetIds.length} queued set(s)`,
       cardsSynced: stats.cardsSynced,
       setsSynced: stats.setsSynced,
       percent: stats.stopped ? undefined : 100,
@@ -474,6 +488,7 @@ export async function syncNewSetsAndCards(options?: SyncOptions): Promise<SyncSt
   } catch (err) {
     console.error('[CardSync] Error during new set sync:', err);
     stats.setSyncFailed = true;
+    stats.error = sanitizeRoutineError(err);
     recordFinalCounts(stats);
     stats.duration = Date.now() - startTime;
   }

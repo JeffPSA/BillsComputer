@@ -9,6 +9,8 @@ import {
 } from './server/cardDataProvider';
 import { getDatabaseManager } from './server/database/index';
 import { syncAllCards, syncCardsForSet, syncFailedSets, syncIncremental, syncNewSetsAndCards, SyncProgress } from './server/cardSync';
+import { randomUUID } from 'node:crypto';
+import { classifyWeeklyRoutine, restorePersistedRoutineJob, sanitizeRoutineError, type WeeklyRoutineStatus } from './server/weeklyRoutineState';
 
 // Load environment variables from .env file
 config();
@@ -62,13 +64,14 @@ const dbManager = getDatabaseManager();
 
 type AdminSyncMode = 'incremental' | 'force' | 'sets-only' | 'single-set' | 'failed-only';
 interface AdminSyncJob {
+  runId?: string;
   running: boolean;
   stopRequested?: boolean;
   mode?: AdminSyncMode;
   source?: 'admin' | 'dashboard';
   startedAt?: string;
   finishedAt?: string;
-  status?: 'idle' | 'running' | 'completed' | 'stopped' | 'failed';
+  status?: WeeklyRoutineStatus;
   progress?: SyncProgress;
   stats?: any;
   error?: string;
@@ -76,6 +79,24 @@ interface AdminSyncJob {
 }
 
 let adminSyncJob: AdminSyncJob = { running: false, status: 'idle' };
+
+function persistDashboardRoutineJob(job: AdminSyncJob): void {
+  dbManager.setSyncMetadataValue('dashboardRoutineCurrentRun', job);
+}
+
+function restoreDashboardRoutineJob(): void {
+  const restored = restorePersistedRoutineJob(dbManager.getSyncMetadata().dashboardRoutineCurrentRun);
+  if (!restored) return;
+  adminSyncJob = restored as AdminSyncJob;
+  if (restored.status === 'failed' && restored.error === 'Routine interrupted by a service restart.') {
+    dbManager.setSyncMetadataValue('dashboardRoutineLastRunAt', restored.finishedAt);
+    dbManager.setSyncMetadataValue('dashboardRoutineLastStatus', restored.status);
+    dbManager.setSyncMetadataValue('dashboardRoutineLastStats', { error: restored.error });
+    persistDashboardRoutineJob(adminSyncJob);
+  }
+}
+
+restoreDashboardRoutineJob();
 
 interface DatabaseSchema {
   cards: LogicalCard[];
@@ -240,6 +261,7 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
   }
 
   adminSyncJob = {
+    runId: randomUUID(),
     running: true,
     stopRequested: false,
     mode,
@@ -258,6 +280,7 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
       percent: 0,
     },
   };
+  if (source === 'dashboard') persistDashboardRoutineJob(adminSyncJob);
 
   const syncOptions = {
     shouldStop: () => Boolean(adminSyncJob.stopRequested),
@@ -279,16 +302,17 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
   syncPromise
     .then((stats) => {
       const finishedAt = new Date().toISOString();
-      const status = stats.stopped ? 'stopped' : 'completed';
+      const status = classifyWeeklyRoutine(stats);
       adminSyncJob = {
         ...adminSyncJob,
         running: false,
         stopRequested: false,
         finishedAt,
         status,
+        error: status === 'failed' ? stats.error || 'Set discovery failed' : undefined,
         progress: {
           phase: stats.stopped ? 'stopped' : 'complete',
-          message: stats.stopped ? 'Sync stopped safely' : 'Sync complete',
+          message: status === 'partial' ? 'Sync completed with warnings' : status === 'failed' ? 'Sync failed' : stats.stopped ? 'Sync stopped safely' : 'Sync complete',
           cardsSynced: stats.cardsSynced,
           setsSynced: stats.setsSynced,
           percent: stats.stopped ? adminSyncJob.progress?.percent : 100,
@@ -300,6 +324,8 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
         dbManager.setSyncMetadataValue('dashboardRoutineLastRunAt', finishedAt);
         dbManager.setSyncMetadataValue('dashboardRoutineLastStatus', status);
         dbManager.setSyncMetadataValue('dashboardRoutineLastStats', stats);
+        if (status === 'completed') dbManager.setSyncMetadataValue('dashboardRoutineLastSuccessfulRunAt', finishedAt);
+        persistDashboardRoutineJob(adminSyncJob);
       }
     })
     .catch((err: any) => {
@@ -311,13 +337,14 @@ function startAdminSync(mode: AdminSyncMode, setId?: string, source: 'admin' | '
         stopRequested: false,
         finishedAt,
         status: 'failed',
-        error: err?.message || 'Sync failed',
+        error: sanitizeRoutineError(err),
       };
 
       if (source === 'dashboard') {
         dbManager.setSyncMetadataValue('dashboardRoutineLastRunAt', finishedAt);
         dbManager.setSyncMetadataValue('dashboardRoutineLastStatus', 'failed');
-        dbManager.setSyncMetadataValue('dashboardRoutineLastStats', { error: err?.message || 'Sync failed' });
+        dbManager.setSyncMetadataValue('dashboardRoutineLastStats', { error: sanitizeRoutineError(err) });
+        persistDashboardRoutineJob(adminSyncJob);
       }
     });
 

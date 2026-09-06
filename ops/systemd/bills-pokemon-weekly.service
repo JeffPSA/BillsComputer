@@ -1,0 +1,14 @@
+[Unit]
+Description=Start the Bills Computer weekly Pokemon routine
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jeff
+Group=jeff
+EnvironmentFile=/etc/bills-computer-weekly.env
+ExecStart=/home/jeff/.local/bin/node /home/jeff/homelab/websites/bills-computer/BillsComputer/scripts/run-weekly-routine.mjs
+
+[Install]
+WantedBy=multi-user.target

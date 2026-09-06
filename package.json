@@ -9,7 +9,7 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.cjs",
     "lint": "tsc --noEmit",
-    "test": "tsx src/services/allocationEngine.test.ts && tsx tests/tcgWorkflow.test.ts && tsx tests/adversarialAudit.test.ts && tsx tests/functionalityPass.test.ts && tsx tests/shoppingList.test.ts && tsx tests/allocationPersistence.test.ts && tsx tests/allocationDuplicateRegression.test.ts && tsx tests/allocationLock.test.ts && tsx tests/allocationInvariant.test.ts && tsx tests/deckDeletionPersistence.test.ts && tsx tests/deckExport.test.ts",
+    "test": "tsx src/services/allocationEngine.test.ts && tsx tests/weeklyRoutine.test.ts && tsx tests/tcgWorkflow.test.ts && tsx tests/adversarialAudit.test.ts && tsx tests/functionalityPass.test.ts && tsx tests/shoppingList.test.ts && tsx tests/allocationPersistence.test.ts && tsx tests/allocationDuplicateRegression.test.ts && tsx tests/allocationLock.test.ts && tsx tests/allocationInvariant.test.ts && tsx tests/deckDeletionPersistence.test.ts && tsx tests/deckExport.test.ts",
     "test:alloc": "tsx tests/allocationDuplicateRegression.test.ts && tsx tests/allocationLock.test.ts && tsx tests/allocationInvariant.test.ts",
     "test:api": "tsx tests/apiIntegration.test.ts",
     "sync-cards": "node --import tsx/esm server/cardSync.ts",

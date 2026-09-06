@@ -1801,6 +1801,8 @@ export class DatabaseManager {
 
     const lastSyncAt = typeof syncMetadata.lastSyncTimestamp === 'string' ? syncMetadata.lastSyncTimestamp : null;
     const lastSyncTime = lastSyncAt ? new Date(lastSyncAt).getTime() : 0;
+    const routineLastRunAt = typeof syncMetadata.dashboardRoutineLastRunAt === 'string' ? syncMetadata.dashboardRoutineLastRunAt : null;
+    const routineLastRunTime = routineLastRunAt ? new Date(routineLastRunAt).getTime() : 0;
 
     return {
       generatedAt: until.toISOString(),
@@ -1830,9 +1832,12 @@ export class DatabaseManager {
         pendingFailedSetIds: pendingFailedSets,
       },
       routine: {
-        lastRunAt: syncMetadata.dashboardRoutineLastRunAt || null,
+        lastRunAt: routineLastRunAt,
+        lastSuccessfulRunAt: syncMetadata.dashboardRoutineLastSuccessfulRunAt || null,
         lastStatus: syncMetadata.dashboardRoutineLastStatus || null,
         lastStats: syncMetadata.dashboardRoutineLastStats || null,
+        currentRun: syncMetadata.dashboardRoutineCurrentRun || null,
+        ranInWindow: routineLastRunTime >= since.getTime(),
       },
     };
   }

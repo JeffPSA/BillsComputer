@@ -77,8 +77,22 @@ Response shape:
   },
   "routine": {
     "lastRunAt": "2026-08-23T14:00:00.000Z",
+    "lastSuccessfulRunAt": "2026-08-23T14:00:00.000Z",
     "lastStatus": "completed",
-    "lastStats": {}
+    "lastStats": {
+      "newSets": 0,
+      "setsAttempted": 0,
+      "setsCompleted": 0,
+      "failedSetIds": []
+    },
+    "currentRun": {
+      "runId": "8b37f6b9-13a8-4fc8-92bc-e9bed4c696fb",
+      "running": false,
+      "startedAt": "2026-08-23T13:59:55.000Z",
+      "finishedAt": "2026-08-23T14:00:00.000Z",
+      "status": "completed"
+    },
+    "ranInWindow": true
   },
   "syncJob": {
     "running": false,
@@ -89,7 +103,7 @@ Response shape:
 
 ## Run Weekly Routine
 
-This starts a safe new-set scan by default. It checks the Pokémon TCG API for sets missing locally and syncs card data for those new sets.
+This starts a safe weekly routine. It checks the Pokémon TCG API for sets missing locally and syncs card data for the deduplicated union of new sets and sets in the persisted failed-set queue. A run with no work is still a successful completed weekly check. Discovery failures are reported as failed; remaining per-set failures are reported as partial.
 
 ```bash
 curl -X POST \
@@ -111,3 +125,24 @@ curl -X POST \
 ```
 
 Use the read endpoint after triggering the routine to poll status.
+
+The summary distinguishes actual data synchronization from routine execution:
+
+- `sync.lastSyncTimestamp` advances only when set/card data is written.
+- `routine.lastRunAt` is the finish time of every completed attempt.
+- `routine.lastSuccessfulRunAt` advances only after a fully successful routine.
+- `routine.ranInWindow` reports whether the weekly routine itself finished inside the requested window.
+- `routine.currentRun` persists the latest run ID, timestamps, status, statistics, and sanitized failure detail across restarts.
+
+Terminal statuses are `completed`, `partial`, `failed`, or `stopped`. A persisted running job found during startup is marked failed because it was interrupted by the restart.
+
+## Weekly systemd timer
+
+Templates live under `ops/systemd`. Install them only after creating `/etc/bills-computer-weekly.env` with mode `0600`:
+
+```text
+BILLS_COMPUTER_URL=http://127.0.0.1:151
+DASHBOARD_API_TOKEN=your-dashboard-token
+```
+
+Copy the service and timer to `/etc/systemd/system`, run `systemctl daemon-reload`, and enable `bills-pokemon-weekly.timer`. It runs every Sunday at 03:00 Africa/Johannesburg with `Persistent=true`; the helper makes three bounded attempts and treats an already-running routine as success.

@@ -11,13 +11,14 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci
 
 # Copy application files
 COPY . .
 
 # Build the application
 RUN npm run build
+RUN npm prune --omit=dev
 
 # Create data directory
 RUN mkdir -p /app/data

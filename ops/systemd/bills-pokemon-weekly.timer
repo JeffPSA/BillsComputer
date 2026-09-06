@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Bills Computer Pokemon routine every Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00 Africa/Johannesburg
+Persistent=true
+Unit=bills-pokemon-weekly.service
+
+[Install]
+WantedBy=timers.target

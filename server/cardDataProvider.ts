@@ -70,10 +70,11 @@ function getApiHeaders(): Record<string, string> {
  * Fetches and caches Pokémon TCG API sets metadata.
  * This is the canonical source for set code validation.
  */
-export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
+export async function fetchPokemonTcgSets(options: { throwOnFailure?: boolean } = {}): Promise<PokemonTcgSet[]> {
   const cacheKey = 'sets_all';
   const cached = setsCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    if (options.throwOnFailure && cached.data.sets.length === 0) throw new Error('Pokemon TCG sets request returned an empty set list');
     return cached.data.sets;
   }
 
@@ -92,6 +93,7 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
         if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
           if (attempt === MAX_TRANSIENT_ATTEMPTS) {
             console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status} after ${attempt} attempts`);
+            if (options.throwOnFailure) throw new Error(`Pokemon TCG sets request failed with HTTP ${res.status}`);
             return [];
           }
 
@@ -102,11 +104,13 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
         }
 
         console.warn(`[CardDataProvider] Failed to fetch sets: HTTP ${res.status}`);
+        if (options.throwOnFailure) throw new Error(`Pokemon TCG sets request failed with HTTP ${res.status}`);
         return [];
       }
 
       const json = await res.json();
-      const sets: PokemonTcgSet[] = json.data || [];
+      const sets: PokemonTcgSet[] = Array.isArray(json.data) ? json.data : [];
+      if (options.throwOnFailure && sets.length === 0) throw new Error('Pokemon TCG sets request returned an empty set list');
     
       setsCache.set(cacheKey, {
         data: { sets },
@@ -124,10 +128,15 @@ export async function fetchPokemonTcgSets(): Promise<PokemonTcgSet[]> {
       }
 
       console.error('[CardDataProvider] Failed to fetch sets:', err);
+      if (options.throwOnFailure) {
+        const detail = err instanceof Error ? err.message : 'Unknown upstream error';
+        throw new Error(`Pokemon TCG sets request failed: ${detail}`);
+      }
       return [];
     }
   }
 
+  if (options.throwOnFailure) throw new Error('Pokemon TCG sets request failed after retries');
   return [];
 }
 
