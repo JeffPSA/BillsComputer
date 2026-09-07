@@ -126,23 +126,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div
                   key={deck.id}
                   onClick={() => onSelectDeck(deck.id)}
-                  className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center justify-between hover:border-indigo-300 hover:bg-indigo-50/40 transition-all cursor-pointer"
+                  className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-300 hover:bg-indigo-50/40 transition-all cursor-pointer"
                 >
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-black text-sm text-slate-900">{deck.name}</span>
+                  <div className="min-w-0 w-full sm:w-auto space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="min-w-0 break-words font-black text-sm text-slate-900">{deck.name}</span>
                       <span className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 font-bold rounded-lg uppercase">
                         {deck.version}
                       </span>
                     </div>
-                    <div className="text-xs text-slate-500 flex items-center space-x-3 font-medium">
+                    <div className="text-xs text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-1 font-medium">
                       <span>Format: {deck.format}</span>
                       <span>•</span>
                       <span>{deck.totalAllocatedCards} / {deck.totalRequiredCards} cards physical</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-3">
+                  <div className="flex w-full sm:w-auto flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3">
                     {deck.isFullyOwned ? (
                       <span className="inline-flex items-center px-2.5 py-1 bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-xl">
                         🟢 Fully Owned
@@ -158,7 +158,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         e.stopPropagation();
                         onSelectDeck(deck.id);
                       }}
-                      className="px-3.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-sm"
+                      className="shrink-0 px-3.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-sm"
                     >
                       Manage
                     </button>
